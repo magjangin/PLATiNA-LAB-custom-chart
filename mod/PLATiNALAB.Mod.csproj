@@ -1,0 +1,87 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>PLATiNALAB.Mod</AssemblyName>
+    <RootNamespace>PLATiNALAB.Mod</RootNamespace>
+    <GameRoot>H:\steam\steamapps\common\PLATiNA LAB</GameRoot>
+    <MelonNet6>$(GameRoot)\MelonLoader\net6</MelonNet6>
+    <Il2CppAssemblies>$(GameRoot)\MelonLoader\Il2CppAssemblies</Il2CppAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MelonLoader Core References -->
+    <Reference Include="MelonLoader">
+      <HintPath>$(MelonNet6)\MelonLoader.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(MelonNet6)\0Harmony.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(MelonNet6)\Il2CppInterop.Runtime.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Common">
+      <HintPath>$(MelonNet6)\Il2CppInterop.Common.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+
+    <!-- Game Il2Cpp Interop Assemblies -->
+    <Reference Include="Il2CppPlatinaLab.Main">
+      <HintPath>$(Il2CppAssemblies)\Il2CppPlatinaLab.Main.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppPlatinaLab.DataModel">
+      <HintPath>$(Il2CppAssemblies)\Il2CppPlatinaLab.DataModel.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppPlatinaLab.Common">
+      <HintPath>$(Il2CppAssemblies)\Il2CppPlatinaLab.Common.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppHighendGames.HEAudio">
+      <HintPath>$(Il2CppAssemblies)\Il2CppHighendGames.HEAudio.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(Il2CppAssemblies)\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.VideoModule">
+      <HintPath>$(Il2CppAssemblies)\UnityEngine.VideoModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(Il2CppAssemblies)\Unity.TextMeshPro.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(Il2CppAssemblies)\UnityEngine.UI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppUniTask">
+      <HintPath>$(Il2CppAssemblies)\Il2CppUniTask.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(Il2CppAssemblies)\Il2Cppmscorlib.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(Il2CppAssemblies)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Auto deploy to Mods folder on build -->
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameRoot)\Mods\" />
+  </Target>
+
+</Project>
