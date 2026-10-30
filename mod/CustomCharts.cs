@@ -10,8 +10,10 @@ namespace PLATiNALAB.Mod;
 /// <summary>
 /// 커스텀 차트 로더.
 /// 게임 패턴은 PPPScheme JSON 스트림으로 PatternParser.Parse에 들어온다.
-/// - 원본 차트는 UserData/PLATiNALAB/ChartDump/{key}.json 으로 덤프 (템플릿 용도)
-/// - UserData/PLATiNALAB/CustomCharts/{key}.json 이 있으면 그 내용으로 스트림을 교체
+/// - hwa\ 커스텀 곡은 곡 폴더의 차트로 교체 (CustomSongs)
+/// - 기존 곡: UserData/PLATiNALAB/CustomCharts/{key}.json 이 있으면 그 내용으로 교체
+/// - 원본 차트 덤프(UserData/PLATiNALAB/ChartDump)는 형식 조사용이라 기본 꺼짐.
+///   UserData/MelonPreferences.cfg의 [PLATiNALAB] DumpCharts = true 로 켠다.
 /// 파일은 매 플레이마다 다시 읽으므로 게임 재시작 없이 수정 → 재플레이로 확인 가능.
 /// </summary>
 internal static class CustomCharts
@@ -20,15 +22,21 @@ internal static class CustomCharts
     public static readonly string DumpDir = Path.Combine(Root, "ChartDump");
     public static readonly string CustomDir = Path.Combine(Root, "CustomCharts");
 
+    private static MelonLoader.MelonPreferences_Entry<bool> s_dumpCharts;
+    private static bool DumpEnabled => s_dumpCharts?.Value ?? false;
+
     // Parse(PatternPlayer, Stream)이 내부에서 Parse(Stream)을 부를 경우 중복 처리 방지
     [ThreadStatic] internal static bool Handling;
 
     public static void Init()
     {
-        Directory.CreateDirectory(DumpDir);
-        Directory.CreateDirectory(CustomDir);
-        Core.Log.Msg($"[CustomCharts] Dump: {DumpDir}");
-        Core.Log.Msg($"[CustomCharts] Custom: {CustomDir}");
+        var category = MelonLoader.MelonPreferences.CreateCategory("PLATiNALAB");
+        s_dumpCharts = category.CreateEntry("DumpCharts", false, description: "플레이한 원본 차트를 UserData/PLATiNALAB/ChartDump에 JSON으로 저장");
+        if (DumpEnabled)
+        {
+            Directory.CreateDirectory(DumpDir);
+            Core.Log.Msg($"[CustomCharts] 차트 덤프 켜짐: {DumpDir}");
+        }
     }
 
     public static string KeyOf(PatternPlayer player)
@@ -106,7 +114,7 @@ internal static class CustomCharts
                 return ToStream(bytes);
             }
         }
-        else
+        else if (DumpEnabled)
         {
             var dumpPath = Path.Combine(DumpDir, name + ".json");
             try
@@ -125,10 +133,6 @@ internal static class CustomCharts
                 return ToStream(custom);
             }
             catch (Exception e) { Core.Log.Error($"[CustomCharts] 커스텀 차트 읽기 실패, 원본 사용: {e.Message}"); }
-        }
-        else
-        {
-            Core.Log.Msg($"[CustomCharts] 원본 차트: {name} ({bytes.Length} bytes) — 교체하려면 CustomCharts/{name}.json");
         }
         return ToStream(bytes);
     }

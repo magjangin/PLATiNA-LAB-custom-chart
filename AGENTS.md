@@ -106,12 +106,14 @@
   ```
 - **배포 경로:** 빌드 시 `PostBuild` 이벤트에 의해 `H:\steam\steamapps\common\PLATiNA LAB\Mods\PLATiNALAB.Mod.dll`로 자동 복사됨.
 - **실기 검증 완료:** MelonLoader `Latest.log`를 통해 `PLATiNA LAB Custom Mod v1.0.0` 정상 로드 및 초기화 확인 완료.
-- **커스텀 차트 폴더:** `H:\steam\steamapps\common\PLATiNA LAB\UserData\PLATiNALAB\{ChartDump,CustomCharts}` (모드 초기화 시 자동 생성).
+- **커스텀 차트 폴더:** `H:\steam\steamapps\common\PLATiNA LAB\UserData\PLATiNALAB\CustomCharts` (기존 곡 차트 덮어쓰기, 있을 때만 사용).
+- **원본 차트 덤프:** 형식 조사가 끝나 기본 꺼짐. `UserData\MelonPreferences.cfg`의 `[PLATiNALAB]` `DumpCharts = true`로 켜면 `UserData\PLATiNALAB\ChartDump`에 저장.
+- **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`(게임 추출물), `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외 — 공개 저장소에 게임 바이너리/디컴파일 코드를 올리지 않는다.
 
 ## 7. 다음 단계 (미구현)
 - 커스텀 BGM: `bgms[].sound`(예 `lolikami_165bpm.fmod.ogg`)는 FMOD 사운드 이름 → `SetMainTrackToPlay(SoundData)` 후킹으로 외부 ogg 주입 필요.
 - BMS → PPP JSON 변환기 (위치 = 마디번호 + 마디 내 비율, 1마디 시작 = BGM 0초).
-- BMS(`hwa\<곡>\*.bms`) → PPP `chart_<난이도>.json` 변환기 (키음 wav는 미지원).
+- BMS(`hwa\<곡>\*.bms`) → PPP `chart_<난이도>.json` 변환기: 뼈대 `mod/BmsConverter.cs`(헤더·채널 파싱, 위치 = BMS 마디 + 1 + 비율, 1P 11~14 → 레인 1~4 가정). 미연결. TODO는 파일 상단 주석(롱노트, 박자/BPM 변경, 난이도별 파일, 키음 미지원).
 - BPM 변속이 있는 차트의 길이 계산 (현재 initialBpm 기준 근사, 경고 로그).
 - 결과 화면 `SectionDetailPanelController.Initialize` NRE 해소 (섹션 기록/캐시 쪽 추정).
 - 결과 score가 로그상 0 (`GameEndResult.FinalScore`) — 화면 표시와 일치 여부 확인.
