@@ -73,6 +73,22 @@
       <HintPath>$(Il2CppAssemblies)\Il2Cppmscorlib.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(Il2CppAssemblies)\UnityEngine.UIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(Il2CppAssemblies)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppPlatinaLab.CustomInput">
+      <HintPath>$(Il2CppAssemblies)\Il2CppPlatinaLab.CustomInput.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.Collections">
+      <HintPath>$(Il2CppAssemblies)\Unity.Collections.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(Il2CppAssemblies)\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>

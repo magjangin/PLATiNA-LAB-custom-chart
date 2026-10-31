@@ -16,7 +16,11 @@ public class Core : MelonMod
         Log.Msg("==================================================");
         Log.Msg("[PLATiNALAB.Mod] PLATiNA LAB Mod Skeleton Loaded!");
         Log.Msg("==================================================");
+        ModConfig.Load("시작");
         CustomCharts.Init();
         CustomSongs.Scan();
         AddressableKeyRedirect.Apply(HarmonyInstance);
-    }}
+    }
+
+    public override void OnUpdate() => PlayOverlay.Update();
+}
