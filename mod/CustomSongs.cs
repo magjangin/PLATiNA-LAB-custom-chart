@@ -24,6 +24,8 @@ internal sealed class CustomSong
     public string Artist = "Unknown";
     public string Bpm;
     public string Patterner = "hwa";
+    /// <summary>BMS 레인 1~4에 대응하는 채널 (info.txt `lanes = 16,11,12,13`). 비면 BmsConverter 기본 순서.</summary>
+    public readonly List<string> Lanes = new();
     public readonly List<CustomChart> Charts = new();
 
     public string MusicPath => FirstExisting("music.ogg");
@@ -72,6 +74,9 @@ internal sealed class CustomSong
                     case "아티스트": case "artist": song.Artist = value; break;
                     case "bpm": song.Bpm = value; break;
                     case "패턴제작자": case "채보": case "patterner": song.Patterner = value; break;
+                    case "레인": case "lanes":
+                        song.Lanes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                        break;
                     case "난이도": case "difficulty": case "difficulties":
                         difficulties.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                             .Select(d => d.ToLowerInvariant()));
@@ -118,7 +123,9 @@ internal sealed class CustomChart
     public int PatternIndex;
     public PatternInfo Pattern;
 
-    /// <summary>chart_{난이도}.json 우선, 없으면 chart.json. 둘 다 없으면 chart_{난이도}.json으로 템플릿을 만든다.</summary>
+    /// <summary>곡 폴더에 BMS가 있으면 이걸 변환해서 쓴다 (JSON보다 우선). 파일명에 난이도가 들어간 BMS → 없으면 첫 BMS.</summary>
+    public string BmsPath => BmsConverter.FindFor(Song.Folder, Difficulty);
+    /// <summary>BMS가 없을 때: chart_{난이도}.json 우선, 없으면 chart.json. 둘 다 없으면 chart_{난이도}.json으로 템플릿을 만든다.</summary>
     public string ChartPath => Song.FirstExisting($"chart_{Difficulty}.json", "chart.json") ?? Path.Combine(Song.Folder, $"chart_{Difficulty}.json");
     public string Key => $"{Song.Id}_{Difficulty}";
 }
@@ -183,7 +190,7 @@ internal static class CustomSongs
         All.Clear();
         for (int i = 0; i < folders.Count; i++) All.Add(CustomSong.Load(folders[i], i + 1));
         foreach (var s in All)
-            Core.Log.Msg($"[CustomSongs] {s.Id} '{s.Title}' ({Path.GetFileName(s.Folder)}) music={s.MusicPath != null} video={s.VideoPath != null} cover={s.ThumbnailPath != null} charts=[{string.Join(", ", s.Charts.Select(c => $"{c.Difficulty}:{c.Level}{(File.Exists(c.ChartPath) ? "" : "(템플릿)")}"))}]");
+            Core.Log.Msg($"[CustomSongs] {s.Id} '{s.Title}' ({Path.GetFileName(s.Folder)}) music={s.MusicPath != null} video={s.VideoPath != null} cover={s.ThumbnailPath != null} charts=[{string.Join(", ", s.Charts.Select(c => $"{c.Difficulty}:{c.Level}{(c.BmsPath != null ? $"(BMS {Path.GetFileName(c.BmsPath)})" : File.Exists(c.ChartPath) ? "" : "(템플릿)")}"))}]");
     }
 
     public static void Inject()

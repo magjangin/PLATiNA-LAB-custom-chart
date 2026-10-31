@@ -69,6 +69,7 @@ patterner : me
 | `난이도` | 쉼표로 구분한 난이도 목록 |
 | `<난이도>` | 해당 난이도의 레벨 |
 | `patterner` / `패턴제작자` | 패턴 제작자 |
+| `lanes` / `레인` | BMS 레인 1~4에 대응하는 채널 (예 `16,11,12,13`) |
 
 사용 가능한 난이도 이름은 `easy`, `hard`, `over`, `plus`, `testpattern` 입니다. 그 밖의 이름(예: `normal`)은 남는 유효 이름으로 자동 대체되고 로그에 경고가 남습니다.
 
@@ -77,6 +78,18 @@ patterner : me
 차트는 게임의 PPP 형식 JSON입니다. `chart_<난이도>.json` → `chart.json` 순서로 찾고, 둘 다 없으면 노트 1개짜리 템플릿을 `chart_<난이도>.json`으로 만들어 줍니다. 그 파일을 고쳐 쓰면 됩니다.
 
 형식과 위치(마디) 단위는 [docs/chart_format.md](docs/chart_format.md)를 참고하세요.
+
+### BMS로 만들기
+
+곡 폴더에 `.bms`가 있으면 JSON 대신 BMS를 변환해서 씁니다(매 플레이마다 다시 읽음). 노트 종류는 `#WAV` 파일 이름으로 정합니다.
+
+| WAV 파일 | 노트 |
+| --- | --- |
+| `ShortNote.wav` | 단노트 |
+| `LongNote 홀드 시작.wav` ~ `LongNote 홀드 끝.wav` | 롱노트 (같은 채널) |
+| `PitchNote.wav` | 피치 노트 |
+
+레인은 `info.txt`에 `lanes = 16,11,12,13`처럼 지정합니다(없으면 BMSE 화면 순서로 자동). 자세한 규칙은 [docs/chart_format.md](docs/chart_format.md#bms로-차트-만들기-hwa-곡-폴더).
 
 ## 기존 곡 차트 덮어쓰기
 
@@ -105,7 +118,7 @@ dotnet build mod\PLATiNALAB.Mod.csproj
 
 ## 알려진 한계 / 예정
 
-- BMS → 차트 변환기는 뼈대만 있고 아직 연결되지 않았습니다 (`mod/BmsConverter.cs`).
+- BMS 변환은 박자 변경(#mmm02), STOP, 키음을 지원하지 않습니다.
 - BPM 변속이 있는 차트는 곡 길이 계산이 근사치입니다.
 - 결과 화면의 섹션 상세 패널이 비어 있을 수 있습니다.
 - `CUSTOM` 카테고리 이름은 로컬라이즈되지 않습니다.

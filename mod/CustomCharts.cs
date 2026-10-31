@@ -92,7 +92,25 @@ internal static class CustomCharts
         var song = CustomSongs.ByKey(key);
         if (song != null)
         {
-            // hwa\ 곡 폴더: chart.json이 없으면 기반 차트에서 첫 노트만 남긴 템플릿을 만들어 둔다
+            // hwa\ 곡 폴더: BMS가 있으면 매 플레이마다 변환(핫리로드), JSON보다 우선
+            var bms = song.BmsPath;
+            if (bms != null)
+            {
+                try
+                {
+                    var music = song.Song.MusicPath != null ? Path.GetFileName(song.Song.MusicPath) : "music.ogg";
+                    var converted = BmsConverter.Convert(BmsConverter.Parse(bms), music, song.Song.Lanes,
+                        System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
+                    var chart = CustomSongs.PrepareChart(System.Text.Encoding.UTF8.GetBytes(converted.ToJsonString()), bytes, song.Song);
+                    Core.Log.Msg($"[CustomCharts] 커스텀 곡 BMS 적용: {song.Key} '{song.Song.Title}' ← {Path.GetFileName(bms)} ({chart.Length} bytes)");
+                    return ToStream(chart);
+                }
+                catch (Exception e)
+                {
+                    Core.Log.Error($"[CustomCharts] {bms} 변환 실패, JSON 차트로 진행: {e}");
+                }
+            }
+            // chart.json이 없으면 기반 차트에서 첫 노트만 남긴 템플릿을 만들어 둔다
             if (!File.Exists(song.ChartPath))
             {
                 try
