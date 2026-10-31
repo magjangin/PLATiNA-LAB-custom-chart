@@ -65,6 +65,13 @@
   - **WAV 규칙:** 곡 폴더 키음은 위 4개로 통일하고 원래 키음 이름을 종류별로 묶어 `#WAV`를 재연결(hihat/kick/snare → ShortNote, `X 홀드 시작/끝` → LongNote, drop → PitchNote). 오브젝트 번호 패턴으로 종류를 추측하지 말 것 — 002/003이 짝지어 나온다고 홀드로 오인했다가 정정함.
   - **PitchNote = PPP `key: 255` 단노트:** `PatternParser.GetNotes`(RVA 0x2D0C180)가 key를 그대로 `NoteEntity.HorizontalIndex`(+0x20)에 넣고, `PatternPlayer.PopulateNotes`(RVA 0x2CF72F0)가 `HorizontalIndex == 0xFF`면 `PitchNote`, 아니면 `ShortNote(time, HorizontalIndex)` 생성. Grouped(롱노트)는 피치 불가. 인게임 피치 판정은 아직 미확인(이 곡엔 피치 노트 없음).
   - 레인: info.txt `lanes = 16,11,12,13`, 없으면 BMSE 화면 순서(16,11,12,13,14,15,18,19) 앞 4개. 이 곡은 1=16/2=11/3=12/4=13으로 플레이 확인.
+- **sxtg2 기능 포팅: 설정 파일 / 오토 플레이 / 올 퍼펙트 / 판정바 / 키뷰어 (2026-10-31)** — `mod/ModConfig.cs`, `mod/PlayAssist.cs`, `mod/PlayOverlay.cs`. 원본은 `H:\source\repos\sxtg2\sxtg2-mod` (Mono, IMGUI).
+  - 설정: `<게임>\SaveCustomKey\config.txt` (sxtg2와 같은 위치·형식, 없으면 주석 포함 기본 파일 생성). `PlayDirector.Awake` Prefix마다 다시 읽음 → 다음 곡부터 반영.
+  - 오토 플레이: 게임 내장 모드(`InGameSettingType.Extra.AutoPlay`). `InGameSettingHelper.IsAutoPlayMode()`(RVA 0x2CD2680)는 `Instance.Extra.Extra == 1` 비교인데 직접 호출이 없어(인라인) 패치 불가 → `PlayDirector.Awake`에서 `ExtraScheme.SetExtra(AutoPlay)`, `OnDestroy`에서 원래 값 복원. `InGameSettingManager.Save` 앞뒤로 원래 값을 잠시 되돌려 PlayerPrefs에 저장되지 않게 함. `IsScorable()`은 Extra ∈ {AutoPlay, NoDeath, PartyTime}이면 false → 게임이 스스로 기록 안 남김. **인게임 미확인.**
+  - 올 퍼펙트: `PatternPlayer.ProcessJudgeResult(JudgeResult)` Prefix에서 `judgeResult.Judgment = PerfectHigh`(JudgeResult는 인터롭에서 박싱 래퍼라 세터가 원본 호출에 반영되는 것으로 예상), `ProcessTickResult(ref JudgmentType)`도 PerfectHigh. 서버 랭킹 게임이라 **커스텀 곡(`CustomSongs.Current != null`)에서만** 동작. 점수·결과 화면 반영은 **미확인**.
+  - 판정바: 같은 Prefix에서 `JudgeResult.Error`(ms, double; `TimingOffsetMilliseconds`는 같은 값의 정수) 수집. 게임은 error < 0이 FAST(`UpdateFastSlow` → `ScoreRecorderUtility.AddRecord(isFast: 0 > error)`) → 화면은 부호 반전(+ = FAST). 범위는 `Constants.JudgmentTimingMap` 실측 PerfectHigh ±25 / Perfect ±50 / Great ±80 / Good ±120 ms. 2026-10-31 실기 확인(로그 error=-7.1/23.2/51.1 등, 화면 왼쪽 세로 바 표시).
+  - 키뷰어: `PatternPlayer.ProcessInputEvent(InputEvent{double Timestamp, ushort KeyCode, bool IsPressed})` Prefix. 키코드 → 레인은 `InputStateMachine.GetKeyBindingArray(LineMode)` 순서 + `GetPitchKey(LineMode)`(피치 칸). 키코드 = RawKeycode(상위 바이트 0xE0 = 확장키, 하위 = 스캔코드) → `user32!GetKeyNameTextW`로 라벨. 실측 FourLines: A S ; ' + 피치 Enter (0x1E 0x1F 0x27 0x28, 피치 0x1C). 2026-10-31 실기 확인.
+  - 그리기: 화면 오버레이 Canvas(sortingOrder 30000) + `UnityEngine.UI.Image` + `Il2CppTMPro.TextMeshProUGUI`, `Core.OnUpdate`에서 갱신. 판정·입력 훅은 게임 루프 스레드(HFTask)라 lock으로 넘김. 반복 경고는 `WarnOnce`.
 - **Nullable Context 해제:**
   - `Il2Cppmscorlib` 참조 시 `NullableContextAttribute` 관련 충돌(CS0656)을 방지하기 위해 `.csproj`에서 `<Nullable>disable</Nullable>`로 설정함.
 
@@ -102,6 +109,10 @@
 - **인터롭 어셈블리에서 `GetInterfaces()`로 IResourceLocator 구현체 탐색:** Il2CppInterop은 IL2CPP 인터페이스를 C# 인터페이스로 남기지 않음 → 메서드 이름 `Locate`(인자 3개)로 탐색. `Unity.Addressables`는 지연 로드라 `Assembly.Load` 선행 필요.
 - **음원 교체 지점 실패들:** `PreviewSoundController.Method_Private_UniTask_1_SoundData_String_CancellationToken_PDM_0` Prefix·`PatternPlayer.SetMainTrackToPlay` Prefix → 둘 다 발동 안 함. `SoundData` 생성자 Prefix → `Failed to init IL2CPP patch backend for SoundData::.ctor` 경고(관리 코드 쪽만 패치됨) → 정적 `FromHEAudioClip(HEAudioClip,bool,Action)`로 이동해 성공. `HEAudioClip.name` 세터는 문자열 Span 경로라 쓰지 않음.
 - **LINQ 람다 일부에서 CS0656(NullableAttribute) 빌드 오류:** `All.SelectMany(...).FirstOrDefault(...)` 등 → foreach로 교체.
+- **IMGUI(OnGUI)로 오버레이 그리기:** 이 게임 빌드는 IMGUI가 스트리핑돼 `GUI.*` 호출마다 `Method unstripping failed`(매 프레임 경고로 로그 3700줄+) → uGUI Canvas로 교체. `GUIStyle(GUIStyle)` 복사 생성자도 없음.
+- **`Constants.JudgmentTimingMap` 값을 `ValueTuple.Item1/Item2`로 읽기:** 1.15E-311 같은 쓰레기값 → 박스를 `il2cpp_object_unbox`해서 double 두 개를 직접 읽음.
+- **`InGameSettingHelper.IsAutoPlayMode` / `InputStateMachine.Interpret` 패치:** 둘 다 호출부에 인라인돼 직접 호출 없음 → 설정값 자체를 바꾸거나(`SetExtra`) 직접 호출되는 `ProcessInputEvent`를 후킹.
+- **이전 세션 `xrefs.py`(E8 호출 탐색)가 아무것도 못 찾음:** `.text` 섹션만 훑었는데 GameAssembly 코드는 다른 실행 섹션에 있음 → 실행 가능(0x20000000) 섹션 전부를 훑어야 함.
 - **게임 exe 직접 실행:** `PlatformInitializationFailedException: Failed to initialize steam sdk` 후 종료 → `steam://run/3430470//-screen-fullscreen 0 -screen-width 1600 -screen-height 900/`로 Steam 경유 실행.
 - **모드 프로젝트 Nullable enable 빌드:** `CS0656: System.Runtime.CompilerServices.NullableContextAttribute..ctor` 컴파일 오류 발생 → `<Nullable>disable</Nullable>`로 전환하여 해결.
 
@@ -120,6 +131,7 @@
 - **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`(게임 추출물), `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외 — 공개 저장소에 게임 바이너리/디컴파일 코드를 올리지 않는다.
 
 ## 7. 다음 단계 (미구현)
+- 오토 플레이 인게임 확인, 올 퍼펙트가 점수·결과 화면에 반영되는지 확인. 키뷰어가 플레이 화면 하단 섹션 패널과 겹침 → 위치 조정 검토. 일시정지 화면 위에도 오버레이가 그려짐.
 - BMS 박자 변경(#mmm02)·STOP·PitchNote 인게임 판정 확인. 박자 변경은 PPP `bars`의 비 4/4 마디 position 소수부 의미 미확인 → 변박 원곡 덤프로 확인 후 구현.
 - 커스텀 BGM: `bgms[].sound`(예 `lolikami_165bpm.fmod.ogg`)는 FMOD 사운드 이름 → `SetMainTrackToPlay(SoundData)` 후킹으로 외부 ogg 주입 필요.
 - BPM 변속이 있는 차트의 길이 계산 (현재 initialBpm 기준 근사, 경고 로그).
