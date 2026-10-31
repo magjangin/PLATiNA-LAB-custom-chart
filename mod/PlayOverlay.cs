@@ -47,6 +47,7 @@ internal static class PlayOverlay
     private static Dictionary<ushort, int> s_laneOfKey;  // 키코드 → 표시 칸 인덱스
     private static string[] s_labels = Array.Empty<string>();
     private static bool[] s_pressed = Array.Empty<bool>();
+    private static bool[] s_pressedBuffer = Array.Empty<bool>(); // GC allocation 방지용 재사용 버퍼
     private static int s_pitchIndex = -1;
     private static LineModeType s_mode = LineModeType.None;
 
@@ -59,6 +60,7 @@ internal static class PlayOverlay
     private static TextMeshProUGUI s_label, s_labelShadow;
     private static readonly List<(Image bg, Outline border, TextMeshProUGUI text)> s_keys = new();
     private static TMP_FontAsset s_font;
+    private static float s_nextFontSearchTime;
     private static readonly Dictionary<(int, int, int), Sprite> s_shapeSprites = new();
     private static readonly HashSet<string> s_warned = new();
 
@@ -159,17 +161,18 @@ internal static class PlayOverlay
         return t;
     }
 
-    /// <summary>TMP 기본 폰트가 없으면 씬에 있는 게임 텍스트의 폰트를 빌린다.</summary>
+    /// <summary>TMP 기본 폰트가 없으면 씬에 있는 게임 텍스트의 폰트를 빌린다 (3초 쿨다운으로 프레임 드랍 방지).</summary>
     private static TMP_FontAsset FindFont()
     {
         if (s_font != null) return s_font;
         try { s_font = TMP_Settings.defaultFontAsset; } catch { }
-        if (s_font == null)
+        if (s_font == null && Time.time >= s_nextFontSearchTime)
         {
+            s_nextFontSearchTime = Time.time + 3.0f;
             var any = UnityEngine.Object.FindObjectOfType<TextMeshProUGUI>();
             if (any != null) s_font = any.font;
+            if (s_font == null) WarnOnce("[PlayOverlay] TMP 폰트를 찾지 못함 — 글자가 안 보일 수 있음");
         }
-        if (s_font == null) WarnOnce("[PlayOverlay] TMP 폰트를 찾지 못함 — 글자가 안 보일 수 있음");
         return s_font;
     }
 
@@ -207,7 +210,7 @@ internal static class PlayOverlay
                 text.Append($"{Judgments[i]}=({early},{late}) ");
                 loaded[i] = (float)Math.Max(Math.Abs(early), Math.Abs(late));
             }
-            // 값이 말이 안 되면(0, 비정상 크기, 순서 뒤집힘) 폴백 유지
+            // 값이 정상적이면 덮어쓰기
             bool sane = loaded.All(v => v > 1f && v < 1000f) && loaded.Zip(loaded.Skip(1), (a, b) => a <= b).All(x => x);
             if (sane) Array.Copy(loaded, RangeMs, RangeMs.Length);
             Core.Log.Msg($"[JudgmentBar] 판정 범위: {text}{(sane ? "" : "→ 비정상, 기본값 사용")}");
@@ -337,7 +340,8 @@ internal static class PlayOverlay
                 lock (s_keyLock)
                 {
                     if (s_laneOfKey == null || s_mode != __instance.LineMode) BindKeys(__instance.LineMode);
-                    if (s_laneOfKey.TryGetValue(input.KeyCode, out var index)) s_pressed[index] = input.IsPressed;
+                    if (s_laneOfKey.TryGetValue(input.KeyCode, out var index) && index < s_pressed.Length)
+                        s_pressed[index] = input.IsPressed;
                 }
             }
             catch (Exception e) { WarnOnce($"[KeyViewer] 입력 처리 오류: {e.Message}"); }
@@ -398,8 +402,15 @@ internal static class PlayOverlay
 
     private static void UpdateKeyViewer()
     {
-        string[] labels; bool[] pressed; int pitchIndex;
-        lock (s_keyLock) { labels = s_labels; pressed = (bool[])s_pressed.Clone(); pitchIndex = s_pitchIndex; }
+        string[] labels; int pitchIndex; int len;
+        lock (s_keyLock)
+        {
+            labels = s_labels;
+            pitchIndex = s_pitchIndex;
+            len = s_pressed.Length;
+            if (s_pressedBuffer.Length != len) s_pressedBuffer = new bool[len];
+            Array.Copy(s_pressed, s_pressedBuffer, len);
+        }
 
         while (s_keys.Count < labels.Length)
         {
@@ -422,7 +433,7 @@ internal static class PlayOverlay
             if (i >= labels.Length) { bg.gameObject.SetActive(false); continue; }
             bg.gameObject.SetActive(true);
             float w = i == pitchIndex ? pitchW : boxW;
-            bool down = pressed[i];
+            bool down = i < len && s_pressedBuffer[i];
             SetRect(bg, new Rect(x, y, w, boxH), down ? (i == pitchIndex ? ModConfig.KeyViewerPitchPressedColor : ModConfig.KeyViewerPressedColor) : ModConfig.KeyViewerNormalColor);
             border.effectColor = down ? new Color(1f, 1f, 1f, 0.95f) : new Color(1f, 1f, 1f, 0.35f);
             var rt = text.rectTransform;
@@ -441,16 +452,32 @@ internal static class PlayOverlay
     {
         if (w < 2 || h < 2) return null;
         if (s_shapeSprites.TryGetValue((shape, w, h), out var cached) && cached != null) return cached;
-        if (s_shapeSprites.Count > 64) s_shapeSprites.Clear();
+        if (s_shapeSprites.Count > 64)
+        {
+            foreach (var kvp in s_shapeSprites)
+            {
+                if (kvp.Value != null)
+                {
+                    if (kvp.Value.texture != null) UnityEngine.Object.Destroy(kvp.Value.texture);
+                    UnityEngine.Object.Destroy(kvp.Value);
+                }
+            }
+            s_shapeSprites.Clear();
+        }
         try
         {
             var tex = new Texture2D(w, h, TextureFormat.ARGB32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, hideFlags = HideFlags.HideAndDontSave };
+            var pixels = new Color[w * h];
             for (int y = 0; y < h; y++)
+            {
+                int rowOffset = y * w;
                 for (int x = 0; x < w; x++)
                 {
                     float d = shape == 1 ? Capsule(x + 0.5f, y + 0.5f, w, h) : Diamond(x + 0.5f, y + 0.5f, w, h);
-                    tex.SetPixel(x, y, new Color(1f, 1f, 1f, Mathf.Clamp01(0.5f - d)));
+                    pixels[rowOffset + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(0.5f - d));
                 }
+            }
+            tex.SetPixels(pixels);
             tex.Apply();
             var sprite = Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f));
             sprite.hideFlags = HideFlags.HideAndDontSave;

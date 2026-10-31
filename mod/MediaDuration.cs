@@ -9,21 +9,36 @@ namespace PLATiNALAB.Mod;
 /// </summary>
 internal static class MediaDuration
 {
-    /// <summary>Ogg Vorbis: 마지막 페이지의 granule position / 식별 헤더의 샘플레이트.</summary>
+    /// <summary>Ogg Vorbis: 마지막 페이지의 granule position / 식별 헤더의 샘플레이트. 대용량 파일 전체 로드 없이 스트림 앞/뒤만 읽는다.</summary>
     public static double? Ogg(string path)
     {
         try
         {
-            var data = File.ReadAllBytes(path);
-            var vorbis = IndexOf(data, Encoding.ASCII.GetBytes("\u0001vorbis"), 0);
-            if (vorbis < 0) return null;
-            uint rate = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(vorbis + 12));
+            using var fs = File.OpenRead(path);
+            long fileLen = fs.Length;
+            if (fileLen < 64) return null;
+
+            // 1. 앞부분(최대 8KB)에서 식별 헤더(\u0001vorbis) 및 샘플레이트 찾기
+            int headSize = (int)Math.Min(8192, fileLen);
+            var headBuf = new byte[headSize];
+            ReadFully(fs, headBuf, 0, headSize);
+            var vorbis = IndexOf(headBuf, Encoding.ASCII.GetBytes("\u0001vorbis"), 0);
+            if (vorbis < 0 || vorbis + 16 > headSize) return null;
+            uint rate = BinaryPrimitives.ReadUInt32LittleEndian(headBuf.AsSpan(vorbis + 12));
+            if (rate == 0) return null;
+
+            // 2. 뒷부분(최대 64KB)에서 마지막 OggS 페이지를 역순 탐색
+            int tailSize = (int)Math.Min(65536, fileLen);
+            fs.Position = fileLen - tailSize;
+            var tailBuf = new byte[tailSize];
+            ReadFully(fs, tailBuf, 0, tailSize);
+
             var oggS = Encoding.ASCII.GetBytes("OggS");
-            for (int i = data.Length - 27; i >= 0; i--)
+            for (int i = tailSize - 27; i >= 0; i--)
             {
-                if (data[i] != 'O' || !data.AsSpan(i, 4).SequenceEqual(oggS)) continue;
-                long granule = BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(i + 6));
-                return rate > 0 && granule > 0 ? granule / (double)rate : null;
+                if (tailBuf[i] != 'O' || !tailBuf.AsSpan(i, 4).SequenceEqual(oggS)) continue;
+                long granule = BinaryPrimitives.ReadInt64LittleEndian(tailBuf.AsSpan(i + 6));
+                if (granule > 0) return granule / (double)rate;
             }
         }
         catch (Exception e) { Core.Log.Warning($"[MediaDuration] ogg 길이 읽기 실패: {e.Message}"); }

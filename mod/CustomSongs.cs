@@ -75,7 +75,8 @@ internal sealed class CustomSong
                     case "bpm": song.Bpm = value; break;
                     case "패턴제작자": case "채보": case "patterner": song.Patterner = value; break;
                     case "레인": case "lanes":
-                        song.Lanes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                        song.Lanes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .Select(x => x.Trim().ToUpperInvariant()));
                         break;
                     case "난이도": case "difficulty": case "difficulties":
                         difficulties.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -395,7 +396,7 @@ internal static class SongInfo_IsHidden_Patch
 {
     private static bool Prefix(SongInfo __instance, ref bool __result)
     {
-        if (!CustomSongs.IsCustomId(__instance.Id)) return true;
+        if (__instance == null || !CustomSongs.IsCustomId(__instance.Id)) return true;
         __result = false;
         return false;
     }
@@ -406,7 +407,7 @@ internal static class PatternInfo_GetPatternFileName_Patch
 {
     private static void Postfix(PatternInfo __instance, ref string __result)
     {
-        if (!CustomSongs.IsCustom(__instance) || CustomSongs.s_baseFileName == null) return;
+        if (__instance == null || !CustomSongs.IsCustom(__instance) || CustomSongs.s_baseFileName == null) return;
         if (__result != CustomSongs.s_baseFileName)
             Core.Log.Msg($"[CustomSongs] GetPatternFileName '{__result}' -> '{CustomSongs.s_baseFileName}'");
         __result = CustomSongs.s_baseFileName;
@@ -418,7 +419,7 @@ internal static class SongInfo_IsAvailable_Patch
 {
     private static bool Prefix(SongInfo __instance, ref bool __result)
     {
-        if (!CustomSongs.IsCustomId(__instance.Id)) return true;
+        if (__instance == null || !CustomSongs.IsCustomId(__instance.Id)) return true;
         __result = true;
         return false;
     }
@@ -429,7 +430,7 @@ internal static class SongInfo_IsNotOwned_Patch
 {
     private static bool Prefix(SongInfo __instance, ref bool __result)
     {
-        if (!CustomSongs.IsCustomId(__instance.Id)) return true;
+        if (__instance == null || !CustomSongs.IsCustomId(__instance.Id)) return true;
         __result = false;
         return false;
     }
@@ -440,7 +441,7 @@ internal static class SongInfo_IsLock_Patch
 {
     private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
     {
-        if (!CustomSongs.IsCustomId(__instance.Id)) return true;
+        if (__instance == null || !CustomSongs.IsCustomId(__instance.Id)) return true;
         __result = false;
         return false;
     }
@@ -451,7 +452,7 @@ internal static class SongInfo_IsNewSongMarkTarget_Patch
 {
     private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
     {
-        if (!CustomSongs.IsCustomId(__instance.Id)) return true;
+        if (__instance == null || !CustomSongs.IsCustomId(__instance.Id)) return true;
         __result = false;
         return false;
     }
@@ -472,7 +473,7 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
 
     private static void Postfix(SongCategoryResourceCollection __instance, string categoryKey, ref SongCategoryResourceDataSet __result)
     {
-        if (categoryKey != CustomSongs.CategoryTag) return;
+        if (__instance == null || categoryKey != CustomSongs.CategoryTag) return;
         try
         {
             if (s_dataSet == null || s_dataSet.WasCollected) s_dataSet = Create(__instance);
@@ -529,23 +530,27 @@ internal static class PatternPlayer_DetermineRunning_HoldEnd_Patch
     private static void Prefix(Il2CppPlatinaLab.Main.InGame.PatternPlayer __instance, out bool __state)
     {
         __state = false;
-        if (!CustomSongs.IsCustom(__instance.PlayPattern) || __instance._isLastNoteProcessingTriggered) return;
-        var data = __instance._patternData;
-        if (data == null) return;
-        int endAt = data.DurationMicroSec - EndMarginMicroSec;
-        if (!s_logged)
+        try
         {
-            s_logged = true;
-            Core.Log.Msg($"[CustomSongs] 클리어 연출 보류: {endAt / 1_000_000.0:F1}s까지 (차트 길이 {data.DurationMicroSec / 1_000_000.0:F1}s)");
+            if (__instance == null || !CustomSongs.IsCustom(__instance.PlayPattern) || __instance._isLastNoteProcessingTriggered) return;
+            var data = __instance._patternData;
+            if (data == null) return;
+            int endAt = data.DurationMicroSec - EndMarginMicroSec;
+            if (!s_logged)
+            {
+                s_logged = true;
+                Core.Log.Msg($"[CustomSongs] 클리어 연출 보류: {endAt / 1_000_000.0:F1}s까지 (차트 길이 {data.DurationMicroSec / 1_000_000.0:F1}s)");
+            }
+            if (__instance.CurrentTimeMicroseconds >= endAt) return;
+            __instance._isLastNoteProcessingTriggered = true;
+            __state = true;
         }
-        if (__instance.CurrentTimeMicroseconds >= endAt) return;
-        __instance._isLastNoteProcessingTriggered = true;
-        __state = true;
+        catch (Exception e) { Core.Log.Warning($"[CustomSongs] DetermineRunning 보류 처리 오류: {e.Message}"); }
     }
 
     private static void Postfix(Il2CppPlatinaLab.Main.InGame.PatternPlayer __instance, bool __state)
     {
-        if (__state) __instance._isLastNoteProcessingTriggered = false;
+        if (__state && __instance != null) __instance._isLastNoteProcessingTriggered = false;
     }
 }
 
@@ -554,7 +559,7 @@ internal static class AbstractPreFilteredCache_UpdatePostProcessData_Patch
 {
     private static void Postfix(AbstractPreFilteredCache __instance)
     {
-        if (__instance.Key != CustomSongs.CategoryTag) return;
+        if (__instance == null || __instance.Key != CustomSongs.CategoryTag) return;
         Core.Log.Msg($"[CustomSongs] custom 카테고리 raw={__instance.RawData?.Count} post={__instance.PostProcessData?.Count}");
     }
 }
@@ -569,12 +574,13 @@ internal static class CategoryCacheFactory_CreateAll_Patch
             if (__result == null) return;
             CustomSongs.Inject();
             foreach (var c in __result)
-                if (c.Key == CustomSongs.CategoryTag) return;
+                if (c != null && c.Key == CustomSongs.CategoryTag) return;
             var cache = new TagCategoryCache(CustomSongs.CategoryTag, CustomSongs.CategoryTag);
             __result.Add(cache);
             Core.Log.Msg($"[CustomSongs] 카테고리 '{CustomSongs.CategoryTag}' 추가 (총 {__result.Count}개)");
             var keys = new List<string>();
-            foreach (var c in __result) keys.Add($"{c.Key}({c.GetType().Name}:{c.SongCategoryKey})");
+            foreach (var c in __result)
+                if (c != null) keys.Add($"{c.Key}({c.GetType().Name}:{c.SongCategoryKey})");
             Core.Log.Msg($"[CustomSongs] 카테고리 목록: {string.Join(", ", keys)}");
         }
         catch (Exception e) { Core.Log.Error($"[CustomSongs] 카테고리 추가 실패: {e}"); }

@@ -64,6 +64,13 @@ internal static class BmsConverter
         return files.FirstOrDefault();
     }
 
+    private static bool IsAllZero(string s)
+    {
+        for (int i = 0; i < s.Length; i++)
+            if (s[i] != '0') return false;
+        return true;
+    }
+
     public static BmsChart Parse(string path)
     {
         var chart = new BmsChart { Path = path };
@@ -102,7 +109,7 @@ internal static class BmsConverter
             for (int i = 0; i < count; i++)
             {
                 var value = data.Substring(i * w, w).ToUpperInvariant();
-                if (value.Trim('0').Length == 0) continue;
+                if (IsAllZero(value)) continue;
                 chart.Objects.Add(new BmsObject(measure, channel, (double)i / count, value));
             }
         }

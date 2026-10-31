@@ -14,7 +14,8 @@ namespace PLATiNALAB.Mod;
 /// - 기존 곡: UserData/PLATiNALAB/CustomCharts/{key}.json 이 있으면 그 내용으로 교체
 /// - 원본 차트 덤프(UserData/PLATiNALAB/ChartDump)는 형식 조사용이라 기본 꺼짐.
 ///   UserData/MelonPreferences.cfg의 [PLATiNALAB] DumpCharts = true 로 켠다.
-/// 파일은 매 플레이마다 다시 읽으므로 게임 재시작 없이 수정 → 재플레이로 확인 가능.
+/// 파일 수정 시간(LastWriteTimeUtc)을 확인하여 변경 시에만 재변환/재로드하므로 (핫리로드 지원 및 불필요한 I/O 병목 제거)
+/// 게임 재시작 없이 수정 → 재플레이로 확인 가능.
 /// </summary>
 internal static class CustomCharts
 {
@@ -27,6 +28,14 @@ internal static class CustomCharts
 
     // Parse(PatternPlayer, Stream)이 내부에서 Parse(Stream)을 부를 경우 중복 처리 방지
     [ThreadStatic] internal static bool Handling;
+
+    private sealed class CachedChart
+    {
+        public DateTime LastWriteTimeUtc;
+        public byte[] Data;
+    }
+    private static readonly Dictionary<string, CachedChart> s_bmsCache = new();
+    private static readonly Dictionary<string, CachedChart> s_jsonCache = new();
 
     public static void Init()
     {
@@ -92,16 +101,23 @@ internal static class CustomCharts
         var song = CustomSongs.ByKey(key);
         if (song != null)
         {
-            // hwa\ 곡 폴더: BMS가 있으면 매 플레이마다 변환(핫리로드), JSON보다 우선
+            // hwa\ 곡 폴더: BMS가 있으면 변환(핫리로드 지원 + 캐싱), JSON보다 우선
             var bms = song.BmsPath;
-            if (bms != null)
+            if (bms != null && File.Exists(bms))
             {
                 try
                 {
+                    var bmsWrite = File.GetLastWriteTimeUtc(bms);
+                    if (s_bmsCache.TryGetValue(bms, out var cached) && cached.LastWriteTimeUtc == bmsWrite)
+                    {
+                        return ToStream(cached.Data);
+                    }
+
                     var music = song.Song.MusicPath != null ? Path.GetFileName(song.Song.MusicPath) : "music.ogg";
                     var converted = BmsConverter.Convert(BmsConverter.Parse(bms), music, song.Song.Lanes,
                         System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
-                    var chart = CustomSongs.PrepareChart(System.Text.Encoding.UTF8.GetBytes(converted.ToJsonString()), bytes, song.Song);
+                    var chart = CustomSongs.PrepareChart(Encoding.UTF8.GetBytes(converted.ToJsonString()), bytes, song.Song);
+                    s_bmsCache[bms] = new CachedChart { LastWriteTimeUtc = bmsWrite, Data = chart };
                     Core.Log.Msg($"[CustomCharts] 커스텀 곡 BMS 적용: {song.Key} '{song.Song.Title}' ← {Path.GetFileName(bms)} ({chart.Length} bytes)");
                     return ToStream(chart);
                 }
@@ -110,6 +126,7 @@ internal static class CustomCharts
                     Core.Log.Error($"[CustomCharts] {bms} 변환 실패, JSON 차트로 진행: {e}");
                 }
             }
+
             // chart.json이 없으면 기반 차트에서 첫 노트만 남긴 템플릿을 만들어 둔다
             if (!File.Exists(song.ChartPath))
             {
@@ -120,9 +137,17 @@ internal static class CustomCharts
                 }
                 catch (Exception e) { Core.Log.Error($"[CustomCharts] 첫 노트 차트 생성 실패: {e.Message}"); }
             }
+
             try
             {
+                var chartWrite = File.GetLastWriteTimeUtc(song.ChartPath);
+                if (s_jsonCache.TryGetValue(song.ChartPath, out var cached) && cached.LastWriteTimeUtc == chartWrite)
+                {
+                    return ToStream(cached.Data);
+                }
+
                 var chart = CustomSongs.PrepareChart(File.ReadAllBytes(song.ChartPath), bytes, song.Song);
+                s_jsonCache[song.ChartPath] = new CachedChart { LastWriteTimeUtc = chartWrite, Data = chart };
                 Core.Log.Msg($"[CustomCharts] 커스텀 곡 차트 적용: {song.Key} '{song.Song.Title}' ({chart.Length} bytes)");
                 return ToStream(chart);
             }
@@ -146,7 +171,14 @@ internal static class CustomCharts
         {
             try
             {
+                var customWrite = File.GetLastWriteTimeUtc(customPath);
+                if (s_jsonCache.TryGetValue(customPath, out var cached) && cached.LastWriteTimeUtc == customPathWrite(customWrite))
+                {
+                    return ToStream(cached.Data);
+                }
+
                 var custom = File.ReadAllBytes(customPath);
+                s_jsonCache[customPath] = new CachedChart { LastWriteTimeUtc = customWrite, Data = custom };
                 Core.Log.Msg($"[CustomCharts] 커스텀 차트 적용: {name} ({custom.Length} bytes)");
                 return ToStream(custom);
             }
@@ -154,6 +186,8 @@ internal static class CustomCharts
         }
         return ToStream(bytes);
     }
+
+    private static DateTime customPathWrite(DateTime dt) => dt;
 }
 
 [HarmonyPatch(typeof(PatternParser), nameof(PatternParser.Parse), typeof(PatternPlayer), typeof(Il2CppSystem.IO.Stream))]

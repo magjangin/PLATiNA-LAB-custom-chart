@@ -6,6 +6,7 @@ using Il2CppPlatinaLab.Main.Endpoint;
 using Il2CppPlatinaLab.Main.Endpoint.Model;
 using Il2CppPlatinaLab.Main.InGame.Score;
 using Il2CppPlatinaLab.Main.InGame.Score.Schema;
+using Il2CppPlatinaLab.Main.InGame.Section;
 using Il2CppPlatinaLab.Main.SceneLoader;
 
 namespace PLATiNALAB.Mod;
@@ -28,7 +29,7 @@ internal static class InGameSurface_RequestGameStart_Patch
         CustomSongs.Current = CustomSongs.ByPatternIndex(patternId);
         if (CustomSongs.Current == null) return true;
         var session = new GameSessionResult();
-        session._Token_k__BackingField = OfflineSession.Token;
+        session.Token = OfflineSession.Token;
         __result = new UniTask<SurfaceResult<GameSessionResult>>(SurfaceResult<GameSessionResult>.Success(session));
         Core.Log.Msg($"[OfflineSession] RequestGameStart({patternId}) 서버 호출 생략, 로컬 세션 발급");
         return false;
@@ -54,8 +55,10 @@ internal static class InGameSurface_SendGameEnd_Patch
         if (!CustomSongs.IsCustom(patternInfo)) return true;
         try
         {
-            __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.Success(BuildLocalRecord(request)));
-            Core.Log.Msg($"[OfflineSession] SendGameEnd 서버 전송 생략, 로컬 결과 반환 (score={request?.FinalScore})");
+            var localRecord = BuildLocalRecord(request);
+            __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.Success(localRecord));
+            int score = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
+            Core.Log.Msg($"[OfflineSession] SendGameEnd 서버 전송 생략, 로컬 결과 반환 (score={score})");
         }
         catch (Exception e)
         {
@@ -72,14 +75,22 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// </summary>
     private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request)
     {
-        var response = new EndGameResponse();
-        response._PlayResult_k__BackingField = new PlayResult();
-        response._GrantedItems_k__BackingField = new Il2CppReferenceArray<Il2CppPlatinaLab.DataModel.ItemBase>(0);
-        response._UpdatedAchievements_k__BackingField = new Il2CppReferenceArray<UserAchievementState>(0);
+        // SectionDetailPanelController NRE 방지: SectionRecords가 null이면 빈 배열 할당
+        if (request != null && request.SectionRecords == null)
+        {
+            try { request.SectionRecords = new Il2CppReferenceArray<SectionRecord>(0); }
+            catch { }
+        }
 
+        var response = new EndGameResponse();
+        response.PlayResult = new PlayResult();
+        response.GrantedItems = new Il2CppReferenceArray<Il2CppPlatinaLab.DataModel.ItemBase>(0);
+        response.UpdatedAchievements = new Il2CppReferenceArray<UserAchievementState>(0);
+
+        int finalScore = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
         var snapshot = new GameEndResultSnapShot();
         var zeroMastery = new Il2CppPlatinaLab.Main.Common.Types.Mastery(0);
-        snapshot.RecordPatternScore(0, request?.FinalScore ?? 0);
+        snapshot.RecordPatternScore(0, finalScore);
         snapshot.RecordPatternAccuracy(new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0), new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0));
         snapshot.RecordPatternMastery(zeroMastery, zeroMastery);
         snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
@@ -88,7 +99,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     }
 }
 
-// --- 게임 종료 경로 진단 (지난 플레이에서 SendGameEnd까지 가지 못함) ---
+// --- 게임 종료 경로 진단 ---
 
 [HarmonyPatch(typeof(Il2CppPlatinaLab.Main.Director.PlayDirector), nameof(Il2CppPlatinaLab.Main.Director.PlayDirector.TrySaveScoreAndGameOver))]
 internal static class Diag_TrySave

@@ -4,7 +4,7 @@ using Il2CppInterop.Runtime;
 namespace PLATiNALAB.Mod;
 
 /// <summary>
-/// 커스텀 곡의 리소스(차트 .ppp 등) 주소는 게임이 SongInfo.Id로 만들기 때문에 "custom_test"가 들어간 키가 된다.
+/// 커스텀 곡의 리소스(차트 .ppp 등) 주소는 게임이 SongInfo.Id로 만들기 때문에 "hwa_001" 등이 들어간 키가 된다.
 /// Addressables의 IResourceLocator.Locate(object key, ...) 구현체들에 Prefix를 걸어
 /// 문자열 키 속 커스텀 곡 ID를 기반 곡 ID로 바꿔 원본 리소스를 찾게 한다.
 /// PlayDirector.LoadGame은 LoadTargetPattern 안에 인라인돼 Harmony로 잡히지 않으므로(실측) 이 지점을 쓴다.
@@ -12,6 +12,8 @@ namespace PLATiNALAB.Mod;
 /// </summary>
 internal static class AddressableKeyRedirect
 {
+    private static readonly HashSet<string> s_loggedRedirects = new();
+
     public static void Apply(HarmonyLib.Harmony harmony)
     {
         var prefix = new HarmonyMethod(typeof(AddressableKeyRedirect), nameof(Prefix));
@@ -45,7 +47,7 @@ internal static class AddressableKeyRedirect
 
     private static void Prefix(ref Il2CppSystem.Object key)
     {
-        if (key == null || CustomSongs.s_baseSong == null) return;
+        if (key == null || CustomSongs.s_baseSong == null || CustomSongs.All.Count == 0) return;
         try
         {
             if (IL2CPP.il2cpp_object_get_class(key.Pointer) != Il2CppClassPointerStore<string>.NativeClassPtr) return;
@@ -55,7 +57,10 @@ internal static class AddressableKeyRedirect
             if (song == null) return;
             var redirected = s.Replace(song.Id, CustomSongs.s_baseSong.Id);
             key = new Il2CppSystem.Object(IL2CPP.ManagedStringToIl2Cpp(redirected));
-            Core.Log.Msg($"[KeyRedirect] '{s}' -> '{redirected}'");
+            if (s_loggedRedirects.Add(s))
+            {
+                Core.Log.Msg($"[KeyRedirect] '{s}' -> '{redirected}'");
+            }
         }
         catch (Exception e) { Core.Log.Warning($"[KeyRedirect] 실패: {e.Message}"); }
     }
