@@ -42,3 +42,28 @@
 - 롱노트: `endPosition`에 끝 위치, `ticks`에 판정 틱 위치 목록. 실측 원본은 시작부터 끝 직전까지 1/16마디 간격.
 - 단노트: `endPosition`·`ticks` 모두 `null`.
 - `type`: 실측 원본은 전부 0. 다른 값의 의미는 미확인.
+
+## BMS로 차트 만들기 (hwa\ 곡 폴더)
+곡 폴더에 `.bms`(또는 `.bme/.bml/.pms`)가 있으면 JSON 차트 대신 BMS를 매 플레이마다 변환해서 쓴다(게임 재시작 불필요).
+난이도별로 파일명에 난이도 이름이 들어간 BMS(`hard.bms`, `song_hard.bms` 등)를 쓰고, 없으면 이름순 첫 BMS를 쓴다.
+
+- 위치: `PPP position = BMS 마디 + 1 + tick / 마디 tick 수` → `time = (position - 1) × 240 / bpm`. BMS 000마디 시작 = 음원 0초.
+- 노트 종류는 `#WAV` 파일 이름으로 정한다.
+
+| WAV 파일 | PPP 노트 |
+| --- | --- |
+| `ShortNote.wav` (그 밖의 이름도) | 단노트 |
+| `LongNote 홀드 시작.wav` → `LongNote 홀드 끝.wav` (같은 채널) | 롱노트 (`endPosition` + 1/16마디 `ticks`) |
+| `PitchNote.wav` | 피치 노트 (`key: 255`, 채널 무관) |
+
+- 표준 롱노트(`#LNTYPE 1`의 채널 51~59, `#LNOBJ`)도 지원.
+- 레인: `info.txt`에 `lanes = 16,11,12,13`처럼 레인 1~4 순서의 채널을 적는다. 없으면 쓰인 채널을 BMSE 화면 순서(16, 11, 12, 13, 14, 15, 18, 19)로 앞에서 4개.
+- 곡 음원(`music.ogg`)을 가리키는 오브젝트 위치가 BGM 시작 위치가 된다(채널 무관). 없으면 position 1.
+- 오브젝트 ID는 2자리·3자리 모두 지원(`#WAV` 키 길이로 판단).
+- BPM 변경(채널 03, 08)은 `bpms`로 변환. 박자 변경(#mmm02)·STOP(09)·키음은 미지원(경고 로그).
+- 변환 결과는 MelonLoader 로그 `[BMS] ... 노트 N (롱 N, 피치 N), 레인 [...]`으로 확인.
+
+## PitchNote
+PPP `key`가 255인 단노트. 게임 `PatternParser.GetNotes`가 key를 그대로 `NoteEntity.HorizontalIndex`에 넣고,
+`PatternPlayer.PopulateNotes`가 `HorizontalIndex == 0xFF`면 `PitchNote`, 아니면 `ShortNote(time, HorizontalIndex)`를 만든다 (GameAssembly 디스어셈블).
+롱노트(`endPosition` 있음)는 피치가 될 수 없다.

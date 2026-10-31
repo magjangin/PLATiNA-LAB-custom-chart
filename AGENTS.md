@@ -57,6 +57,14 @@
   - 음원(`music.ogg`): 게임 음원은 `HEAudioClip`(ScriptableObject, `_bytes` + `_audioFormat` Wav/Ogg)이고 `SoundData.FromHEAudioClip(clip, isLooping, afterDispose)`로 재생 객체가 됨. 이 메서드 Prefix에서 클립 이름에 기반 곡 ID가 포함되면(미리듣기 `wits_biz.fmod`, 인게임 `wits_biz_156bpm.fmod`) music.ogg 바이트로 만든 HEAudioClip으로 교체. 어떤 곡 소리인지는 `CustomSongs.Current`(RequestGameStart에서 설정, `PreviewSoundController.Play`에서 해제) / `CustomMedia.PreviewSong`(Play의 songId)으로 판단.
   - BGA(`video.mp4`): 게임은 Addressables `VideoClip`을 `BGAPlayer.SetClip`으로 넘김 → Postfix에서 `_videoPlayer.source = Url` + url = file URI + `Prepare()`.
   - **Unity 6 인터롭 주의:** `ImageConversion.LoadImage`(모든 오버로드), `VideoPlayer.url` 세터 등 문자열/바이트를 `Il2CppSystem.ReadOnlySpan`으로 넘기는 래퍼는 `MissingMethodException: ReadOnlySpan.GetPinnableReference` → 래퍼 본문을 재현해 `MarshalledUnityObject.MarshalNotNull` + `ManagedSpanWrapper(fixed ptr, len)` + `*_Injected` icall 직접 호출 (`CustomMedia.LoadImage`, `CustomMedia.SetUrl`). csproj에 `AllowUnsafeBlocks`.
+- **BMS → PPP 변환 (2026-10-31 실기 검증: どりーむもーど hwa2.bms → 단노트 552, 4레인 플레이·판정 정상)** — `mod/BmsConverter.cs`
+  - 곡 폴더에 `.bms/.bme/.bml/.pms`가 있으면 `CustomCharts.Process`가 JSON보다 우선해 매 플레이마다 변환(핫리로드). 난이도별: 파일명에 난이도 이름이 든 BMS → 없으면 이름순 첫 BMS.
+  - 위치 = BMS 마디 + 1 + tick/마디 tick 수 (time = (position-1) × 240 / bpm). BGM 시작 = `music.ogg`를 가리키는 오브젝트 위치(이 곡은 채널 21, 000마디).
+  - 오브젝트 ID 폭은 `#WAV` 키 길이로 판단 (이 곡은 3자리 `#WAV001`, 데이터도 3자리씩).
+  - 노트 종류 = `#WAV` 파일 이름: `ShortNote.wav` 단노트, 같은 채널 `LongNote 홀드 시작.wav`~`LongNote 홀드 끝.wav` 롱노트(ticks 1/16마디), `PitchNote.wav` 피치. 표준 LNTYPE 1(5x/6x)·LNOBJ도 지원.
+  - **WAV 규칙:** 곡 폴더 키음은 위 4개로 통일하고 원래 키음 이름을 종류별로 묶어 `#WAV`를 재연결(hihat/kick/snare → ShortNote, `X 홀드 시작/끝` → LongNote, drop → PitchNote). 오브젝트 번호 패턴으로 종류를 추측하지 말 것 — 002/003이 짝지어 나온다고 홀드로 오인했다가 정정함.
+  - **PitchNote = PPP `key: 255` 단노트:** `PatternParser.GetNotes`(RVA 0x2D0C180)가 key를 그대로 `NoteEntity.HorizontalIndex`(+0x20)에 넣고, `PatternPlayer.PopulateNotes`(RVA 0x2CF72F0)가 `HorizontalIndex == 0xFF`면 `PitchNote`, 아니면 `ShortNote(time, HorizontalIndex)` 생성. Grouped(롱노트)는 피치 불가. 인게임 피치 판정은 아직 미확인(이 곡엔 피치 노트 없음).
+  - 레인: info.txt `lanes = 16,11,12,13`, 없으면 BMSE 화면 순서(16,11,12,13,14,15,18,19) 앞 4개. 이 곡은 1=16/2=11/3=12/4=13으로 플레이 확인.
 - **Nullable Context 해제:**
   - `Il2Cppmscorlib` 참조 시 `NullableContextAttribute` 관련 충돌(CS0656)을 방지하기 위해 `.csproj`에서 `<Nullable>disable</Nullable>`로 설정함.
 
@@ -94,6 +102,7 @@
 - **인터롭 어셈블리에서 `GetInterfaces()`로 IResourceLocator 구현체 탐색:** Il2CppInterop은 IL2CPP 인터페이스를 C# 인터페이스로 남기지 않음 → 메서드 이름 `Locate`(인자 3개)로 탐색. `Unity.Addressables`는 지연 로드라 `Assembly.Load` 선행 필요.
 - **음원 교체 지점 실패들:** `PreviewSoundController.Method_Private_UniTask_1_SoundData_String_CancellationToken_PDM_0` Prefix·`PatternPlayer.SetMainTrackToPlay` Prefix → 둘 다 발동 안 함. `SoundData` 생성자 Prefix → `Failed to init IL2CPP patch backend for SoundData::.ctor` 경고(관리 코드 쪽만 패치됨) → 정적 `FromHEAudioClip(HEAudioClip,bool,Action)`로 이동해 성공. `HEAudioClip.name` 세터는 문자열 Span 경로라 쓰지 않음.
 - **LINQ 람다 일부에서 CS0656(NullableAttribute) 빌드 오류:** `All.SelectMany(...).FirstOrDefault(...)` 등 → foreach로 교체.
+- **게임 exe 직접 실행:** `PlatformInitializationFailedException: Failed to initialize steam sdk` 후 종료 → `steam://run/3430470//-screen-fullscreen 0 -screen-width 1600 -screen-height 900/`로 Steam 경유 실행.
 - **모드 프로젝트 Nullable enable 빌드:** `CS0656: System.Runtime.CompilerServices.NullableContextAttribute..ctor` 컴파일 오류 발생 → `<Nullable>disable</Nullable>`로 전환하여 해결.
 
 ---
@@ -111,9 +120,8 @@
 - **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`(게임 추출물), `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외 — 공개 저장소에 게임 바이너리/디컴파일 코드를 올리지 않는다.
 
 ## 7. 다음 단계 (미구현)
+- BMS 박자 변경(#mmm02)·STOP·PitchNote 인게임 판정 확인. 박자 변경은 PPP `bars`의 비 4/4 마디 position 소수부 의미 미확인 → 변박 원곡 덤프로 확인 후 구현.
 - 커스텀 BGM: `bgms[].sound`(예 `lolikami_165bpm.fmod.ogg`)는 FMOD 사운드 이름 → `SetMainTrackToPlay(SoundData)` 후킹으로 외부 ogg 주입 필요.
-- BMS → PPP JSON 변환기 (위치 = 마디번호 + 마디 내 비율, 1마디 시작 = BGM 0초).
-- BMS(`hwa\<곡>\*.bms`) → PPP `chart_<난이도>.json` 변환기: 뼈대 `mod/BmsConverter.cs`(헤더·채널 파싱, 위치 = BMS 마디 + 1 + 비율, 1P 11~14 → 레인 1~4 가정). 미연결. TODO는 파일 상단 주석(롱노트, 박자/BPM 변경, 난이도별 파일, 키음 미지원).
 - BPM 변속이 있는 차트의 길이 계산 (현재 initialBpm 기준 근사, 경고 로그).
 - 결과 화면 `SectionDetailPanelController.Initialize` NRE 해소 (섹션 기록/캐시 쪽 추정).
 - 결과 score가 로그상 0 (`GameEndResult.FinalScore`) — 화면 표시와 일치 여부 확인.
