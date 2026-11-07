@@ -295,11 +295,14 @@ internal static class PlayOverlay
         SetRange(s_ranges[2], cx, cy, barW, barH, vertical, RangeMs[0] * 2f * scale, new Color(0.85f, 0.85f, 0.85f, 0.28f), rangeShape); // PERFECT HIGH
         SetRect(s_center, vertical ? new Rect(cx - barW / 2f - 2f, cy - 1f, barW + 4f, 2f) : new Rect(cx - 1f, cy - barH / 2f - 2f, 2f, barH + 4f), Color.white);
 
-        while (s_ticks.Count < s_history.Count) s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
+        const int MaxVisibleTicks = 32;
+        int activeCount = Math.Min(s_history.Count, MaxVisibleTicks);
+        while (s_ticks.Count < activeCount) s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
         for (int i = 0; i < s_ticks.Count; i++)
         {
-            if (i >= s_history.Count) { s_ticks[i].enabled = false; continue; }
-            var t = s_history[i];
+            if (i >= activeCount) { s_ticks[i].enabled = false; continue; }
+            // 최근 틱 우선 표시 (오래된 틱은 자동 가려짐)
+            var t = s_history[s_history.Count - activeCount + i];
             float ms = Mathf.Clamp(t.OffsetMs, -maxMs, maxMs);
             var c = JudgeColor(t.Judgment); c.a = Mathf.Clamp01(1f - (now - t.Time) / Duration) * 0.9f;
             SetRect(s_ticks[i], vertical

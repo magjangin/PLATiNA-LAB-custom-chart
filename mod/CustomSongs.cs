@@ -75,14 +75,14 @@ internal sealed class CustomSong
                 {
                     case "곡제목": case "제목": case "title":
                     case "歌名": case "曲名": case "标题":
-                        song.Title = value; break;
+                        song.Title = TextSanitizer.Sanitize(value); break;
                     case "아티스트": case "artist":
                     case "曲师": case "作曲": case "艺术家": case "作者":
-                        song.Artist = value; break;
+                        song.Artist = TextSanitizer.Sanitize(value); break;
                     case "bpm": song.Bpm = value; break;
                     case "패턴제작자": case "채보": case "patterner":
                     case "谱师": case "谱面": case "谱面制作者": case "作谱":
-                        song.Patterner = value; break;
+                        song.Patterner = TextSanitizer.Sanitize(value); break;
                     case "레인": case "lanes":
                     case "轨道": case "键位": case "按键":
                         song.Lanes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

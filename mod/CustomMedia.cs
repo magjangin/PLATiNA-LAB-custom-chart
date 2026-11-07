@@ -21,7 +21,9 @@ namespace PLATiNALAB.Mod;
 internal static class CustomMedia
 {
     private static readonly Dictionary<string, HEAudioClip> s_clips = new();
+    private const int MaxCoverCache = 24;
     private static readonly Dictionary<string, Sprite> s_covers = new();
+    private static readonly LinkedList<string> s_coverLru = new();
     private static readonly HashSet<string> s_failedCovers = new();
 
     public static HEAudioClip GetClip(string path)
@@ -119,21 +121,46 @@ internal static class CustomMedia
 
     public static Sprite GetCover(string path)
     {
-        if (s_covers.TryGetValue(path, out var cached) && cached != null && !cached.WasCollected) return cached;
+        if (s_covers.TryGetValue(path, out var cached) && cached != null && !cached.WasCollected)
+        {
+            // LRU 갱신: 최근 사용된 항목을 뒤로 이동
+            s_coverLru.Remove(path);
+            s_coverLru.AddLast(path);
+            return cached;
+        }
         if (!s_failedCovers.Add(path)) return null; // 실패한 파일은 매 프레임 재시도하지 않는다
+
+        // 캐시 한도 초과 시 가장 오래된 텍스처/스프라이트 메모리 명시적 해제 (GPU VRAM 누수 차단)
+        while (s_covers.Count >= MaxCoverCache && s_coverLru.First != null)
+        {
+            var oldest = s_coverLru.First.Value;
+            s_coverLru.RemoveFirst();
+            if (s_covers.Remove(oldest, out var oldSprite) && oldSprite != null && !oldSprite.WasCollected)
+            {
+                try
+                {
+                    if (oldSprite.texture != null && !oldSprite.texture.WasCollected)
+                        UnityEngine.Object.Destroy(oldSprite.texture);
+                    UnityEngine.Object.Destroy(oldSprite);
+                }
+                catch { }
+            }
+        }
 
         var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
         tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
         if (!LoadImage(tex, File.ReadAllBytes(path)))
         {
             Core.Log.Warning($"[CustomMedia] 이미지 로드 실패: {path}");
+            UnityEngine.Object.Destroy(tex);
             return null;
         }
         var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
         sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
         s_covers[path] = sprite;
+        s_coverLru.AddLast(path);
         s_failedCovers.Remove(path);
-        Core.Log.Msg($"[CustomMedia] 커버 로드: {path} ({tex.width}x{tex.height})");
+        Core.Log.Msg($"[CustomMedia] 커버 로드: {path} ({tex.width}x{tex.height}) [캐시 {s_covers.Count}/{MaxCoverCache}]");
         return sprite;
     }
 }

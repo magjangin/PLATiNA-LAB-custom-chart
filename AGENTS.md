@@ -89,6 +89,12 @@
   - **설정 파일 중국어 지원 (`ModConfig`):** config.txt에서 开/关, 开启/关闭, 是/否 및 중국어 색상명(红, 蓝, 绿, 黄, 白, 黑, 橙, 紫 등) 파싱 지원.
   - **로케일 폰트 자동 연동 (`PlayOverlay.FindFont`):** 게임 내 LocalizeTMPFont 컴포넌트의 폰트를 우선 탐색하여 중국어/CJK 글리프 Tofu(사각형 깨짐) 방지.
   - **강제 나가기 상태 격리 (`OfflineSession.Diag_Exit`):** 곡 플레이 도중 나가기(Exit) 시 오토플레이 복원, 오버레이 비활성화, 커스텀 세션 플래그를 완벽 초기화하여 상태 잔류 방지.
+- **메모리 누수(ogg 제외) 감사 및 영문 축약형 정규화 보강 (2026-11-07):**
+  - **커버 텍스처 LRU 캐시 및 VRAM 해제 (`CustomMedia.GetCover`):** 최대 24개 초과 시 가장 오래된 Sprite 및 Texture2D를 `UnityEngine.Object.Destroy`로 명시적 파괴하여 VRAM 누수 원천 차단.
+  - **IL2CPP MemoryStream 명시적 해제 (`CustomCharts.ReadAll`):** try-finally 블록에서 `ms.Dispose()` 호출로 네이티브 힙 누수 방지, 차트 핫리로드 캐시 엔트리 상한(32개) 제어.
+  - **UI 오브젝트 상한 풀링 (`PlayOverlay.UpdateJudgmentBar`):** 판정 틱 Image 오브젝트를 최대 32개로 상한 제한하여 무한 생성 방지.
+  - **영문 축약형/공백 자동 교정 (`TextSanitizer`):** 영문 텍스트 내 비정상적 아포스트로피 띄어쓰기(`you'  re` → `you're`, `don ' t` → `don't`), 특수 따옴표 및 연속 공백을 정규화하여 info.txt 및 BMS 타이틀에 자동 적용.
+  - **공개 문서화 최신화 (`README.md`):** 판정바/키뷰어, 오토플레이/올퍼펙트, 중국어/다국어 인코딩, 설정 가이드 전면 반영.
 - **업데이트 내성 및 이중 래퍼(Double-Wrapper) 강화 (2026-11-07):**
   - **백킹 필드 & 프로퍼티 동적 래퍼 (`UpdateResilience.SafeSetFieldOrProperty`):** 게임 업데이트 시 컴파일러 백킹 필드 이름 변경에 대응하여 프로퍼티 setter 및 다양한 백킹 필드 형식(_k__BackingField, m_, _ 등)을 순차 탐색하여 안전 주입.
   - **네이티브 icall 이중 래퍼 (`CustomMedia.LoadImage`, `SetUrl`):** 1차 공식 Unity API 호출 시도 -> ReadOnlySpan 이슈/MissingMethodException 발생 시 2차 네이티브 icall fallback으로 버전 변경 및 인터롭 수정에 양방향 대응.

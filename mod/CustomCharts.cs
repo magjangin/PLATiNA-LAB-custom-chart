@@ -34,8 +34,15 @@ internal static class CustomCharts
         public DateTime LastWriteTimeUtc;
         public byte[] Data;
     }
+    private const int MaxChartCache = 32;
     private static readonly Dictionary<string, CachedChart> s_bmsCache = new();
     private static readonly Dictionary<string, CachedChart> s_jsonCache = new();
+
+    private static void StoreCache(Dictionary<string, CachedChart> cache, string key, CachedChart item)
+    {
+        if (cache.Count >= MaxChartCache) cache.Clear();
+        cache[key] = item;
+    }
 
     public static void Init()
     {
@@ -81,9 +88,10 @@ internal static class CustomCharts
 
     private static byte[] ReadAll(Il2CppSystem.IO.Stream stream)
     {
+        Il2CppSystem.IO.MemoryStream ms = null;
         try
         {
-            var ms = new Il2CppSystem.IO.MemoryStream();
+            ms = new Il2CppSystem.IO.MemoryStream();
             stream.CopyTo(ms);
             return ms.ToArray().ToArray();
         }
@@ -91,6 +99,10 @@ internal static class CustomCharts
         {
             Core.Log.Warning($"[CustomCharts] 스트림 읽기 예외: {e.Message}");
             return Array.Empty<byte>();
+        }
+        finally
+        {
+            try { ms?.Dispose(); } catch { }
         }
     }
 
@@ -135,7 +147,7 @@ internal static class CustomCharts
                     var converted = BmsConverter.Convert(BmsConverter.Parse(bms), music, song.Song.Lanes,
                         System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
                     var chart = CustomSongs.PrepareChart(Encoding.UTF8.GetBytes(converted.ToJsonString()), bytes, song.Song);
-                    s_bmsCache[bms] = new CachedChart { LastWriteTimeUtc = bmsWrite, Data = chart };
+                    StoreCache(s_bmsCache, bms, new CachedChart { LastWriteTimeUtc = bmsWrite, Data = chart });
                     Core.Log.Msg($"[CustomCharts] 커스텀 곡 BMS 적용: {song.Key} '{song.Song.Title}' ← {Path.GetFileName(bms)} ({chart.Length} bytes)");
                     return ToStream(chart);
                 }
@@ -165,7 +177,7 @@ internal static class CustomCharts
                 }
 
                 var chart = CustomSongs.PrepareChart(File.ReadAllBytes(song.ChartPath), bytes, song.Song);
-                s_jsonCache[song.ChartPath] = new CachedChart { LastWriteTimeUtc = chartWrite, Data = chart };
+                StoreCache(s_jsonCache, song.ChartPath, new CachedChart { LastWriteTimeUtc = chartWrite, Data = chart });
                 Core.Log.Msg($"[CustomCharts] 커스텀 곡 차트 적용: {song.Key} '{song.Song.Title}' ({chart.Length} bytes)");
                 return ToStream(chart);
             }
@@ -196,7 +208,7 @@ internal static class CustomCharts
                 }
 
                 var custom = File.ReadAllBytes(customPath);
-                s_jsonCache[customPath] = new CachedChart { LastWriteTimeUtc = customWrite, Data = custom };
+                StoreCache(s_jsonCache, customPath, new CachedChart { LastWriteTimeUtc = customWrite, Data = custom });
                 Core.Log.Msg($"[CustomCharts] 커스텀 차트 적용: {name} ({custom.Length} bytes)");
                 return ToStream(custom);
             }

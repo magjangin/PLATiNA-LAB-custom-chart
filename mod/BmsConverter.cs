@@ -118,8 +118,8 @@ internal static class BmsConverter
             if (space < 0) continue;
             var key = line[1..space].ToUpperInvariant();
             var arg = line[(space + 1)..].Trim();
-            if (key == "TITLE") chart.Title = arg;
-            else if (key == "ARTIST") chart.Artist = arg;
+            if (key == "TITLE") chart.Title = TextSanitizer.Sanitize(arg);
+            else if (key == "ARTIST") chart.Artist = TextSanitizer.Sanitize(arg);
             else if (key == "BPM" && TryDouble(arg, out var bpm)) chart.Bpm = bpm;
             else if (key == "PLAYLEVEL" && int.TryParse(arg, out var lv)) chart.PlayLevel = lv;
             else if (key == "LNOBJ") chart.LnObj = arg.ToUpperInvariant();
