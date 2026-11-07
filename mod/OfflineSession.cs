@@ -177,6 +177,20 @@ internal static class Diag_TrySave
 internal static class Diag_Exit
 {
     private static void Prefix(bool isGameOver) => Core.Log.Msg($"[Diag] PlayDirector.Exit(isGameOver={isGameOver})");
+
+    private static void Postfix()
+    {
+        try
+        {
+            PlayOverlay.InPlay = false;
+            PlayAssist.RestoreAutoPlay();
+            CustomSongs.Current = null;
+        }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[PlayDirector.Exit] 나가기 상태 정리 오류: {e.Message}");
+        }
+    }
 }
 
 [HarmonyPatch(typeof(Il2CppPlatinaLab.Main.Common.Dialog.ErrorDialogCollection), nameof(Il2CppPlatinaLab.Main.Common.Dialog.ErrorDialogCollection.APIServerError))]

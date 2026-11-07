@@ -164,13 +164,28 @@ internal static class PlayOverlay
     /// <summary>TMP 기본 폰트가 없으면 씬에 있는 게임 텍스트의 폰트를 빌린다 (3초 쿨다운으로 프레임 드랍 방지).</summary>
     private static TMP_FontAsset FindFont()
     {
-        if (s_font != null) return s_font;
+        if (s_font != null && !s_font.WasCollected) return s_font;
         try { s_font = TMP_Settings.defaultFontAsset; } catch { }
-        if (s_font == null && Time.time >= s_nextFontSearchTime)
+        if ((s_font == null || s_font.WasCollected) && Time.time >= s_nextFontSearchTime)
         {
             s_nextFontSearchTime = Time.time + 3.0f;
-            var any = UnityEngine.Object.FindObjectOfType<TextMeshProUGUI>();
-            if (any != null) s_font = any.font;
+            try
+            {
+                // 1. 언어 설정(LocalizeTMPFont) 컴포넌트의 폰트 우선 탐색 (CJK/중국어 글리프 보장)
+                var loc = UnityEngine.Object.FindObjectOfType<Il2CppPlatinaLab.Main.Common.Font.LocalizeTMPFont>();
+                if (loc != null && loc._text != null && loc._text.font != null)
+                {
+                    s_font = loc._text.font;
+                }
+            }
+            catch { }
+
+            // 2. 일반 텍스트 폰트 폴백
+            if (s_font == null || s_font.WasCollected)
+            {
+                var any = UnityEngine.Object.FindObjectOfType<TextMeshProUGUI>();
+                if (any != null) s_font = any.font;
+            }
             if (s_font == null) WarnOnce("[PlayOverlay] TMP 폰트를 찾지 못함 — 글자가 안 보일 수 있음");
         }
         return s_font;

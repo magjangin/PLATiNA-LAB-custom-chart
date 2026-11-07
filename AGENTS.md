@@ -83,6 +83,12 @@
     - `request.SectionRecords`가 null일 경우 빈 배열 할당으로 `SectionDetailPanelController.Initialize` NRE 방지.
     - 최종 점수 계산 시 `request.Score`와 `request.FinalScore` 중 최댓값 선택.
     - `CustomSongs`의 폰트/오브젝트 및 `CustomMedia`의 icall 호출 전 `WasCollected`/null 방어 검사.
+- **중국어 지원 및 부실 부분 강화 감사 (2026-11-07):**
+  - **다국어 인코딩 자동 감지 (`EncodingHelper`):** UTF-8 BOM/Strict 검사 후 실패 시 중국어 GBK(CP936)/Big5, 일본어 Shift-JIS(CP932), 한국어 CP949를 자동 감지하여 BMS/메타 파일 글자 깨짐 및 파싱 실패 원천 차단.
+  - **중국어 메타 및 파일명 지원 (`CustomSongs`, `BmsConverter`):** info.txt 중국어 키워드(歌名/曲师/谱师/难度/轨道 등) 파싱, 封面/曲绘/音乐 등 파일명 확장, 롱노트/피치노트 중국어 키워드(长条开始/结束, 滑音, 音高) 인식.
+  - **설정 파일 중국어 지원 (`ModConfig`):** config.txt에서 开/关, 开启/关闭, 是/否 및 중국어 색상명(红, 蓝, 绿, 黄, 白, 黑, 橙, 紫 등) 파싱 지원.
+  - **로케일 폰트 자동 연동 (`PlayOverlay.FindFont`):** 게임 내 LocalizeTMPFont 컴포넌트의 폰트를 우선 탐색하여 중국어/CJK 글리프 Tofu(사각형 깨짐) 방지.
+  - **강제 나가기 상태 격리 (`OfflineSession.Diag_Exit`):** 곡 플레이 도중 나가기(Exit) 시 오토플레이 복원, 오버레이 비활성화, 커스텀 세션 플래그를 완벽 초기화하여 상태 잔류 방지.
 - **업데이트 내성 및 이중 래퍼(Double-Wrapper) 강화 (2026-11-07):**
   - **백킹 필드 & 프로퍼티 동적 래퍼 (`UpdateResilience.SafeSetFieldOrProperty`):** 게임 업데이트 시 컴파일러 백킹 필드 이름 변경에 대응하여 프로퍼티 setter 및 다양한 백킹 필드 형식(_k__BackingField, m_, _ 등)을 순차 탐색하여 안전 주입.
   - **네이티브 icall 이중 래퍼 (`CustomMedia.LoadImage`, `SetUrl`):** 1차 공식 Unity API 호출 시도 -> ReadOnlySpan 이슈/MissingMethodException 발생 시 2차 네이티브 icall fallback으로 버전 변경 및 인터롭 수정에 양방향 대응.

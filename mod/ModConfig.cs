@@ -7,7 +7,8 @@ namespace PLATiNALAB.Mod;
 /// <summary>
 /// SaveCustomKey\config.txt — sxtg2(STARTRAIL 모드)와 같은 형식의 설정 파일.
 /// 곡을 시작할 때(PlayDirector.Awake)마다 다시 읽으므로 게임을 재시작하지 않아도 다음 곡부터 반영된다.
-/// 값: 1/0, true/false, 켜짐/꺼짐, on/off. # 또는 // 로 시작하는 줄은 주석.
+/// 값: 1/0, true/false, 켜짐/꺼짐, on/off, 开/关. # 또는 // 로 시작하는 줄은 주석.
+/// 다국어 지원: 한국어, 영어, 중국어(간체/번체).
 /// </summary>
 internal static class ModConfig
 {
@@ -29,7 +30,7 @@ internal static class ModConfig
 
     private const string DefaultText = @"# PLATiNA LAB 모드 설정 파일 (SaveCustomKey/config.txt)
 # 저장하면 다음 곡(곡을 시작할 때)부터 적용됩니다. 게임을 다시 켤 필요는 없습니다.
-# 켜기/끄기 값: 1/0, true/false, 켜짐/꺼짐, on/off 모두 됩니다. # 또는 // 로 시작하는 줄은 주석입니다.
+# 켜기/끄기 값: 1/0, true/false, 켜짐/꺼짐, on/off, 开/关 모두 됩니다. # 또는 // 로 시작하는 줄은 주석입니다.
 
 # ===== [플레이] =====
 
@@ -66,7 +67,7 @@ JudgmentBarSide=Center
 EnableKeyViewer=1
 
 # 키를 눌렀을 때 색 (일반 노트 키)
-# 형식: #RRGGBB, #RRGGBBAA, R,G,B,A, 색 이름 (시안, 마젠타, 노랑, 빨강, 파랑, 초록, 흰색, 검정, 주황, 보라, 분홍, 하늘, 민트)
+# 형식: #RRGGBB, #RRGGBBAA, R,G,B,A, 색 이름 (시안, 마젠타, 노랑, 빨강, 파랑, 초록, 흰색, 검정, 주황, 보라, 분홍, 하늘, 민트 / 红, 蓝, 绿, 黄, 白, 黑, 橙, 紫, 粉 등)
 KeyViewerPressedColor=#26BFD9D9
 
 # 누르지 않았을 때 색
@@ -87,7 +88,7 @@ KeyViewerPitchPressedColor=#FF4081E6
                 File.WriteAllText(path, DefaultText, new System.Text.UTF8Encoding(true));
                 Core.Log.Msg($"[Config] 기본 설정 파일 생성: {path}");
             }
-            foreach (var raw in File.ReadAllLines(path))
+            foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
             {
                 var line = raw.Trim().TrimStart('﻿');
                 if (line.Length == 0 || line.StartsWith("#") || line.StartsWith("//")) continue;
@@ -124,8 +125,8 @@ KeyViewerPitchPressedColor=#FF4081E6
 
     private static bool Bool(string v, bool fallback) => v.ToLowerInvariant() switch
     {
-        "1" or "true" or "on" or "켜짐" or "켬" or "yes" => true,
-        "0" or "false" or "off" or "꺼짐" or "끔" or "no" => false,
+        "1" or "true" or "on" or "켜짐" or "켬" or "yes" or "开" or "开启" or "是" or "对" => true,
+        "0" or "false" or "off" or "꺼짐" or "끔" or "no" or "关" or "关闭" or "否" or "错" => false,
         _ => fallback,
     };
 
@@ -137,19 +138,19 @@ KeyViewerPitchPressedColor=#FF4081E6
         v = v.Trim();
         switch (v)
         {
-            case "시안": return new Color(0f, 1f, 1f);
-            case "마젠타": return new Color(1f, 0f, 1f);
-            case "노랑": return new Color(1f, 0.92f, 0.016f);
-            case "빨강": return new Color(1f, 0f, 0f);
-            case "파랑": return new Color(0f, 0f, 1f);
-            case "초록": return new Color(0f, 1f, 0f);
-            case "흰색": return new Color(1f, 1f, 1f);
-            case "검정": return new Color(0f, 0f, 0f);
-            case "주황": return new Color(1f, 0.5f, 0f);
-            case "보라": return new Color(0.5f, 0f, 1f);
-            case "분홍": return new Color(1f, 0.6f, 0.8f);
-            case "하늘": return new Color(0.53f, 0.81f, 0.98f);
-            case "민트": return new Color(0.6f, 1f, 0.8f);
+            case "시안": case "青": case "青色": return new Color(0f, 1f, 1f);
+            case "마젠타": case "品红": case "洋红": return new Color(1f, 0f, 1f);
+            case "노랑": case "黄": case "黄色": return new Color(1f, 0.92f, 0.016f);
+            case "빨강": case "红": case "红色": return new Color(1f, 0f, 0f);
+            case "파랑": case "蓝": case "蓝色": return new Color(0f, 0f, 1f);
+            case "초록": case "绿": case "绿色": return new Color(0f, 1f, 0f);
+            case "흰색": case "白": case "白色": return new Color(1f, 1f, 1f);
+            case "검정": case "黑": case "黑色": return new Color(0f, 0f, 0f);
+            case "주황": case "橙": case "橙色": return new Color(1f, 0.5f, 0f);
+            case "보라": case "紫": case "紫色": return new Color(0.5f, 0f, 1f);
+            case "분홍": case "粉": case "粉色": return new Color(1f, 0.6f, 0.8f);
+            case "하늘": case "天蓝": case "天蓝色": return new Color(0.53f, 0.81f, 0.98f);
+            case "민트": case "薄荷": case "薄荷绿": return new Color(0.6f, 1f, 0.8f);
         }
         if (v.StartsWith("#") && (v.Length == 7 || v.Length == 9) &&
             uint.TryParse(v[1..], NumberStyles.HexNumber, null, out var hex))

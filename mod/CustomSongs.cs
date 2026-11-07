@@ -28,9 +28,12 @@ internal sealed class CustomSong
     public readonly List<string> Lanes = new();
     public readonly List<CustomChart> Charts = new();
 
-    public string MusicPath => FirstExisting("music.ogg");
-    public string VideoPath => FirstExisting("video.mp4");
-    public string ThumbnailPath => FirstExisting("썸네일.png", "thumbnail.png", "cover.png", "jacket.png");
+    public string MusicPath => FirstExisting("music.ogg", "audio.ogg", "song.ogg", "bgm.ogg", "音乐.ogg", "音频.ogg");
+    public string VideoPath => FirstExisting("video.mp4", "bga.mp4", "bg.mp4", "视频.mp4", "背景.mp4");
+    public string ThumbnailPath => FirstExisting(
+        "썸네일.png", "thumbnail.png", "cover.png", "jacket.png",
+        "封面.png", "曲绘.png", "封面.jpg", "曲绘.jpg",
+        "썸네일.jpg", "thumbnail.jpg", "cover.jpg", "jacket.jpg");
 
     public string FirstExisting(params string[] names)
     {
@@ -61,7 +64,7 @@ internal sealed class CustomSong
         var info = Path.Combine(folder, "info.txt");
         if (File.Exists(info))
         {
-            foreach (var raw in File.ReadAllLines(info))
+            foreach (var raw in EncodingHelper.ReadAllLinesSafe(info))
             {
                 var line = raw.Trim().TrimStart('﻿');
                 int sep = line.IndexOfAny(new[] { ':', '=' });
@@ -70,20 +73,29 @@ internal sealed class CustomSong
                 var value = line[(sep + 1)..].Trim();
                 switch (key)
                 {
-                    case "곡제목": case "제목": case "title": song.Title = value; break;
-                    case "아티스트": case "artist": song.Artist = value; break;
+                    case "곡제목": case "제목": case "title":
+                    case "歌名": case "曲名": case "标题":
+                        song.Title = value; break;
+                    case "아티스트": case "artist":
+                    case "曲师": case "作曲": case "艺术家": case "作者":
+                        song.Artist = value; break;
                     case "bpm": song.Bpm = value; break;
-                    case "패턴제작자": case "채보": case "patterner": song.Patterner = value; break;
+                    case "패턴제작자": case "채보": case "patterner":
+                    case "谱师": case "谱面": case "谱面制作者": case "作谱":
+                        song.Patterner = value; break;
                     case "레인": case "lanes":
+                    case "轨道": case "键位": case "按键":
                         song.Lanes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                             .Select(x => x.Trim().ToUpperInvariant()));
                         break;
                     case "난이도": case "difficulty": case "difficulties":
+                    case "难度":
                         difficulties.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                            .Select(d => d.ToLowerInvariant()));
+                            .Select(d => NormalizeDifficulty(d)));
                         break;
                     default:
-                        if (int.TryParse(value, out var lv)) levels[key] = lv;
+                        var normKey = NormalizeDifficulty(key);
+                        if (int.TryParse(value, out var lv)) levels[normKey] = lv;
                         break;
                 }
             }
@@ -92,7 +104,7 @@ internal sealed class CustomSong
         if (song.Bpm == null)
         {
             var bms = Directory.GetFiles(folder, "*.bms").FirstOrDefault();
-            var bpmLine = bms == null ? null : File.ReadLines(bms).FirstOrDefault(l => l.StartsWith("#BPM ", StringComparison.OrdinalIgnoreCase));
+            var bpmLine = bms == null ? null : EncodingHelper.ReadAllLinesSafe(bms).FirstOrDefault(l => l.StartsWith("#BPM ", StringComparison.OrdinalIgnoreCase));
             if (bpmLine != null) song.Bpm = bpmLine[5..].Trim();
         }
 
@@ -109,6 +121,22 @@ internal sealed class CustomSong
             });
         }
         return song;
+    }
+
+    public static string NormalizeDifficulty(string d)
+    {
+        if (string.IsNullOrWhiteSpace(d)) return "easy";
+        var lower = d.Trim().ToLowerInvariant();
+        return lower switch
+        {
+            "ez" or "간단" or "简单" or "이지" => "easy",
+            "nm" or "보통" or "普通" or "노멀" => "normal",
+            "hd" or "어려움" or "困难" or "하드" => "hard",
+            "ex" or "expert" or "전문가" or "专家" or "大师" => "over",
+            "sp" or "special" or "진계" or "进阶" or "플러스" => "plus",
+            "test" or "테스트" or "测试" => "testpattern",
+            _ => lower,
+        };
     }
 }
 
@@ -370,19 +398,27 @@ internal static class CustomSongs
     /// </summary>
     public static byte[] PrepareChart(byte[] custom, byte[] baseChart, CustomSong song)
     {
-        var root = JsonNode.Parse(custom)!.AsObject();
-        var baseSound = JsonNode.Parse(baseChart)?["bgms"]?.AsArray().FirstOrDefault()?["sound"]?.GetValue<string>();
-        var bgms = root["bgms"] as JsonArray;
-        if (bgms == null || bgms.Count == 0)
+        try
         {
-            bgms = new JsonArray { new JsonObject { ["position"] = 1, ["sound"] = baseSound, ["column"] = 0 } };
-            root["bgms"] = bgms;
-        }
-        if (baseSound != null)
-            foreach (var b in bgms) b!["sound"] = baseSound;
+            var root = JsonNode.Parse(custom)!.AsObject();
+            var baseSound = JsonNode.Parse(baseChart)?["bgms"]?.AsArray().FirstOrDefault()?["sound"]?.GetValue<string>();
+            var bgms = root["bgms"] as JsonArray;
+            if (bgms == null || bgms.Count == 0)
+            {
+                bgms = new JsonArray { new JsonObject { ["position"] = 1, ["sound"] = baseSound, ["column"] = 0 } };
+                root["bgms"] = bgms;
+            }
+            if (baseSound != null)
+                foreach (var b in bgms) b!["sound"] = baseSound;
 
-        ExtendToMediaLength(root, song);
-        return System.Text.Encoding.UTF8.GetBytes(root.ToJsonString());
+            ExtendToMediaLength(root, song);
+            return System.Text.Encoding.UTF8.GetBytes(root.ToJsonString());
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"[CustomSongs] PrepareChart JSON 파싱 예외 발생, 원본 차트 폴백: {e.Message}");
+            return custom ?? baseChart ?? Array.Empty<byte>();
+        }
     }
 
     /// <summary>

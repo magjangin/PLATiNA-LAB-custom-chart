@@ -9,9 +9,11 @@ namespace PLATiNALAB.Mod;
 /// 위치: PPP position = BMS 마디 + 1 + tick / 마디 tick 수.
 ///   (BMS 000마디 시작 ↔ PPP position 1. 1마디 = 4박이므로 time = tick × 240 / bpm / 마디 tick 수)
 ///
-/// 노트 종류는 #WAV 파일 이름으로 정한다 (hwa\ 곡 폴더 규칙):
-///   ShortNote.wav → 단노트, "LongNote 홀드 시작.wav" ~ "LongNote 홀드 끝.wav" → 같은 채널에서 쌍을 이루는 롱노트,
-///   PitchNote.wav → 피치 노트(key 255). 그 밖의 이름은 단노트.
+/// 노트 종류는 #WAV 파일 이름으로 정한다 (다국어 지원: 한국어, 영어, 중국어, 일본어):
+///   단노트: ShortNote.wav, 단노트, 单点, 短音符
+///   롱노트 시작: "LongNote 홀드 시작.wav", HoldStart, 长条开始, 长按开始, ホールド開始
+///   롱노트 끝: "LongNote 홀드 끝.wav", HoldEnd, 长条结束, 长按结束, ホールド終了
+///   피치 노트: PitchNote.wav, 피치, 滑音, 音高 (key 255)
 ///   표준 LNTYPE 1(채널 51~59, 61~69)과 #LNOBJ도 롱노트로 처리한다.
 /// PitchNote: 게임 PopulateNotes(RVA 0x2CF72F0)가 HorizontalIndex == 0xFF인 단노트를 PitchNote로 만든다.
 ///   GetNotes(RVA 0x2D0C180)는 PPP key를 그대로 HorizontalIndex에 넣으므로 PPP key = 255.
@@ -51,17 +53,40 @@ internal static class BmsConverter
     private static readonly string[] DefaultChannelOrder = { "16", "11", "12", "13", "14", "15", "18", "19" };
     private static readonly string[] Extensions = { ".bms", ".bme", ".bml", ".pms" };
 
-    /// <summary>난이도에 쓸 BMS: 파일명에 난이도 이름이 들어간 것 → 없으면 이름순 첫 BMS.</summary>
+    /// <summary>난이도에 쓸 BMS: 파일명에 난이도 이름 또는 별칭(다국어)이 들어간 것 → 없으면 이름순 첫 BMS.</summary>
     public static string FindFor(string folder, string difficulty)
     {
         var files = Directory.GetFiles(folder)
             .Where(f => Extensions.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant()))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        var aliases = GetDifficultyAliases(difficulty);
         foreach (var f in files)
-            if (System.IO.Path.GetFileNameWithoutExtension(f).Contains(difficulty, StringComparison.OrdinalIgnoreCase))
-                return f;
+        {
+            var fileName = System.IO.Path.GetFileNameWithoutExtension(f);
+            foreach (var alias in aliases)
+            {
+                if (fileName.Contains(alias, StringComparison.OrdinalIgnoreCase))
+                    return f;
+            }
+        }
         return files.FirstOrDefault();
+    }
+
+    private static IEnumerable<string> GetDifficultyAliases(string diff)
+    {
+        yield return diff;
+        var lower = diff.ToLowerInvariant();
+        switch (lower)
+        {
+            case "easy": yield return "ez"; yield return "간단"; yield return "简单"; yield return "이지"; break;
+            case "normal": yield return "nm"; yield return "보통"; yield return "普通"; yield return "노멀"; break;
+            case "hard": yield return "hd"; yield return "어려움"; yield return "困难"; yield return "하드"; break;
+            case "over": yield return "ex"; yield return "expert"; yield return "전문가"; yield return "专家"; yield return "大师"; break;
+            case "plus": yield return "sp"; yield return "special"; yield return "진계"; yield return "进阶"; yield return "플러스"; break;
+            case "testpattern": yield return "test"; yield return "테스트"; yield return "测试"; break;
+        }
     }
 
     private static bool IsAllZero(string s)
@@ -75,7 +100,9 @@ internal static class BmsConverter
     {
         var chart = new BmsChart { Path = path };
         var dataLines = new List<(int measure, string channel, string data)>();
-        foreach (var raw in File.ReadLines(path))
+
+        // UTF-8, GBK(중국어), Shift-JIS(일본어), CP949(한국어) 자동 감지 적용
+        foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
         {
             var line = raw.Trim().TrimStart('﻿');
             if (!line.StartsWith("#")) continue;
@@ -163,15 +190,23 @@ internal static class BmsConverter
             }
             if (bms.LnObj != null && o.Value == bms.LnObj)
             {
-                if (lastShort.Remove(channel, out var idx)) notes[idx] = (notes[idx].start, pos, notes[idx].key);
-                else unpaired++;
+                if (lastShort.Remove(channel, out var idx))
+                {
+                    var prev = notes[idx];
+                    notes[idx] = (prev.start, pos, prev.key);
+                }
                 continue;
             }
 
-            switch (RoleOf(bms, o.Value))
+            var role = RoleOf(bms, o.Value);
+            switch (role)
             {
                 case Role.HoldStart:
-                    if (openHold.Remove(channel, out var prev)) { notes.Add((prev.pos, null, lane)); unpaired++; }
+                    if (openHold.TryGetValue(channel, out var prevHold))
+                    {
+                        notes.Add((prevHold.pos, null, prevHold.lane));
+                        unpaired++;
+                    }
                     openHold[channel] = (pos, lane);
                     break;
                 case Role.HoldEnd:
@@ -187,6 +222,7 @@ internal static class BmsConverter
                     break;
             }
         }
+
         // 끝이 없는 홀드는 단노트로
         foreach (var s in openHold.Values.Concat(openLnType.Values)) { notes.Add((s.pos, null, s.lane)); unpaired++; }
 
@@ -260,13 +296,21 @@ internal static class BmsConverter
         _ => channel,
     };
 
+    /// <summary>
+    /// 키음 파일명 기반 역할 판정 (다국어 지원: 한국어, 영어, 중국어, 일본어)
+    /// </summary>
     private static Role RoleOf(BmsChart bms, string value)
     {
         if (!bms.Wav.TryGetValue(value, out var file)) return Role.Short;
         var name = System.IO.Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
-        if (name.Contains("pitch")) return Role.Pitch;
-        if (name.Contains("홀드 시작") || name.Contains("hold start")) return Role.HoldStart;
-        if (name.Contains("홀드 끝") || name.Contains("hold end")) return Role.HoldEnd;
+        if (name.Contains("pitch") || name.Contains("피치") || name.Contains("滑音") || name.Contains("音高"))
+            return Role.Pitch;
+        if (name.Contains("홀드 시작") || name.Contains("hold start") || name.Contains("holdstart") ||
+            name.Contains("长条开始") || name.Contains("长按开始") || name.Contains("ホールド開始"))
+            return Role.HoldStart;
+        if (name.Contains("홀드 끝") || name.Contains("hold end") || name.Contains("holdend") ||
+            name.Contains("长条结束") || name.Contains("长按结束") || name.Contains("ホールド終了"))
+            return Role.HoldEnd;
         return Role.Short;
     }
 
