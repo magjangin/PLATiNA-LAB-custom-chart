@@ -79,12 +79,12 @@ internal static class PlayAssist
     {
         private static void Prefix(InGameSettingManager __instance)
         {
-            if (s_overriding) __instance.Extra?.SetExtra(s_savedExtra);
+            if (s_overriding) __instance?.Extra?.SetExtra(s_savedExtra);
         }
 
         private static void Postfix(InGameSettingManager __instance)
         {
-            if (s_overriding) __instance.Extra?.SetExtra(InGameSettingType.Extra.AutoPlay);
+            if (s_overriding) __instance?.Extra?.SetExtra(InGameSettingType.Extra.AutoPlay);
         }
     }
 
@@ -113,7 +113,10 @@ internal static class PlayAssist
                     PlayOverlay.RegisterHit(error, judgment);
                 }
                 if (AllPerfectActive && judgment != JudgmentType.PerfectHigh && judgment != JudgmentType.Undefined)
-                    judgeResult.Judgment = JudgmentType.PerfectHigh;
+                {
+                    try { judgeResult.Judgment = JudgmentType.PerfectHigh; } catch { }
+                    UpdateResilience.SafeSetFieldOrProperty(judgeResult, "Judgment", JudgmentType.PerfectHigh);
+                }
             }
             catch (Exception e) { Core.Log.Warning($"[PlayAssist] 판정 처리 오류: {e.Message}"); }
         }

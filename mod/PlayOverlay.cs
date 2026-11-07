@@ -202,10 +202,14 @@ internal static class PlayOverlay
             var map = Constants.JudgmentTimingMap;
             var text = new StringBuilder();
             var loaded = new float[RangeMs.Length];
+            if (map == null) return;
             for (int i = 0; i < Judgments.Length; i++)
             {
+                if (!map.ContainsKey(Judgments[i])) continue;
                 var tuple = map[Judgments[i]];
+                if (tuple == null || tuple.Pointer == IntPtr.Zero) continue;
                 var data = (double*)IL2CPP.il2cpp_object_unbox(tuple.Pointer);
+                if (data == null) continue;
                 double early = data[0], late = data[1];
                 text.Append($"{Judgments[i]}=({early},{late}) ");
                 loaded[i] = (float)Math.Max(Math.Abs(early), Math.Abs(late));
@@ -337,6 +341,7 @@ internal static class PlayOverlay
             if (!ModConfig.EnableKeyViewer) return;
             try
             {
+                if (__instance == null) return;
                 lock (s_keyLock)
                 {
                     if (s_laneOfKey == null || s_mode != __instance.LineMode) BindKeys(__instance.LineMode);

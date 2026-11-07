@@ -26,13 +26,21 @@ internal static class InGameSurface_RequestGameStart_Patch
 {
     private static bool Prefix(int patternId, ref UniTask<SurfaceResult<GameSessionResult>> __result)
     {
-        CustomSongs.Current = CustomSongs.ByPatternIndex(patternId);
-        if (CustomSongs.Current == null) return true;
-        var session = new GameSessionResult();
-        session.Token = OfflineSession.Token;
-        __result = new UniTask<SurfaceResult<GameSessionResult>>(SurfaceResult<GameSessionResult>.Success(session));
-        Core.Log.Msg($"[OfflineSession] RequestGameStart({patternId}) 서버 호출 생략, 로컬 세션 발급");
-        return false;
+        try
+        {
+            CustomSongs.Current = CustomSongs.ByPatternIndex(patternId);
+            if (CustomSongs.Current == null) return true;
+            var session = new GameSessionResult();
+            UpdateResilience.SafeSetFieldOrProperty(session, "Token", OfflineSession.Token);
+            __result = new UniTask<SurfaceResult<GameSessionResult>>(SurfaceResult<GameSessionResult>.Success(session));
+            Core.Log.Msg($"[OfflineSession] RequestGameStart({patternId}) 서버 호출 생략, 로컬 세션 발급");
+            return false;
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"[OfflineSession] RequestGameStart 래퍼 예외 발생: {e}");
+            return true;
+        }
     }
 }
 
@@ -56,9 +64,16 @@ internal static class InGameSurface_SendGameEnd_Patch
         try
         {
             var localRecord = BuildLocalRecord(request);
-            __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.Success(localRecord));
-            int score = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
-            Core.Log.Msg($"[OfflineSession] SendGameEnd 서버 전송 생략, 로컬 결과 반환 (score={score})");
+            if (localRecord != null)
+            {
+                __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.Success(localRecord));
+                int score = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
+                Core.Log.Msg($"[OfflineSession] SendGameEnd 서버 전송 생략, 로컬 결과 반환 (score={score})");
+            }
+            else
+            {
+                __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.NetworkError());
+            }
         }
         catch (Exception e)
         {
@@ -72,6 +87,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// 서버 응답 없이 결과 화면에 넘길 레코드를 만든다.
     /// RecordUpdateHelper.UpdatePatternRecordAndBuildSnapshot은 세이브에 패턴 990001 기록을 남기므로 쓰지 않고,
     /// 스냅샷은 Record* 메서드로 직접 채운다 (이전 값 0 → 이번 값).
+    /// 게임 업데이트로 생성자 시그니처가 변경되어도 안전하게 생성하는 이중 래퍼(Reflection fallback) 지원.
     /// </summary>
     private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request)
     {
@@ -89,13 +105,63 @@ internal static class InGameSurface_SendGameEnd_Patch
 
         int finalScore = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
         var snapshot = new GameEndResultSnapShot();
-        var zeroMastery = new Il2CppPlatinaLab.Main.Common.Types.Mastery(0);
-        snapshot.RecordPatternScore(0, finalScore);
-        snapshot.RecordPatternAccuracy(new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0), new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0));
-        snapshot.RecordPatternMastery(zeroMastery, zeroMastery);
-        snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
+        try
+        {
+            var zeroMastery = new Il2CppPlatinaLab.Main.Common.Types.Mastery(0);
+            snapshot.RecordPatternScore(0, finalScore);
+            snapshot.RecordPatternAccuracy(new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0), new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0));
+            snapshot.RecordPatternMastery(zeroMastery, zeroMastery);
+            snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
+        }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[OfflineSession] GameEndResultSnapShot 기록 예외 (기본값 진행): {e.Message}");
+        }
 
-        return new FreeModePlayRecordV2(request, snapshot, response, null, null, new Il2CppSystem.Collections.Generic.List<Il2CppPlatinaLab.Main.Common.FeatureId>());
+        var emptyFeatureList = new Il2CppSystem.Collections.Generic.List<Il2CppPlatinaLab.Main.Common.FeatureId>();
+
+        // 1차: 표준 직접 생성자 호출
+        try
+        {
+            return new FreeModePlayRecordV2(request, snapshot, response, null, null, emptyFeatureList);
+        }
+        catch (MissingMethodException) { /* 시그니처 변경 시 2차 폴백 진행 */ }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[OfflineSession] FreeModePlayRecordV2 직접 생성 실패, 동적 생성자 폴백: {e.Message}");
+        }
+
+        // 2차: Reflection을 통한 동적 생성자 탐색 (업데이트 내성 이중 래퍼)
+        try
+        {
+            var ctors = typeof(FreeModePlayRecordV2).GetConstructors();
+            foreach (var ctor in ctors)
+            {
+                var parms = ctor.GetParameters();
+                var args = new object[parms.Length];
+                for (int i = 0; i < parms.Length; i++)
+                {
+                    var pType = parms[i].ParameterType;
+                    if (pType.IsAssignableFrom(typeof(GameEndResult))) args[i] = request;
+                    else if (pType.IsAssignableFrom(typeof(GameEndResultSnapShot))) args[i] = snapshot;
+                    else if (pType.IsAssignableFrom(typeof(EndGameResponse))) args[i] = response;
+                    else if (pType.IsAssignableFrom(typeof(Il2CppSystem.Collections.Generic.List<Il2CppPlatinaLab.Main.Common.FeatureId>))) args[i] = emptyFeatureList;
+                    else args[i] = pType.IsValueType ? Activator.CreateInstance(pType) : null;
+                }
+                var instance = ctor.Invoke(args);
+                if (instance is FreeModePlayRecordV2 record)
+                {
+                    Core.Log.Msg($"[OfflineSession] FreeModePlayRecordV2 동적 생성 성공 (파라미터 {parms.Length}개)");
+                    return record;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Log.Error($"[OfflineSession] FreeModePlayRecordV2 동적 생성마저 실패: {ex}");
+        }
+
+        return null;
     }
 }
 

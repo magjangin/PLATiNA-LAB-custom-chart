@@ -41,29 +41,76 @@ internal static class CustomMedia
     }
 
     /// <summary>
-    /// 인터롭의 ImageConversion.LoadImage 오버로드는 전부 Il2CppSystem.ReadOnlySpan 경로로 가서
-    /// MissingMethodException(ReadOnlySpan.GetPinnableReference)이 난다(실측). 래퍼 본문을 그대로 재현해 icall을 직접 부른다.
+    /// 이미지 로드 이중 래퍼 (Double-Wrapper):
+    /// 1차: Unity 공식 ImageConversion.LoadImage 시도 (MelonLoader/Unity 인터롭 정상화 시 동작)
+    /// 2차: MissingMethodException(ReadOnlySpan 버그) 시 네이티브 icall(LoadImage_Injected) 직접 호출
     /// </summary>
     private static unsafe bool LoadImage(Texture2D tex, byte[] bytes)
     {
-        if (tex == null || tex.WasCollected) return false;
-        var texPtr = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(tex);
-        fixed (byte* begin = bytes)
+        if (tex == null || tex.WasCollected || bytes == null || bytes.Length == 0) return false;
+
+        // 1차: 표준 공식 API 시도
+        try
         {
-            var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, bytes.Length);
-            return ImageConversion.LoadImage_Injected(texPtr, ref span, false);
+            if (ImageConversion.LoadImage(tex, bytes)) return true;
+        }
+        catch (MissingMethodException) { /* ReadOnlySpan 이슈 발생 시 2차 폴백 진행 */ }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[CustomMedia] 표준 LoadImage 예외 발생, icall 폴백 시도: {e.Message}");
+        }
+
+        // 2차: 네이티브 icall 직접 호출
+        try
+        {
+            var texPtr = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(tex);
+            fixed (byte* begin = bytes)
+            {
+                var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, bytes.Length);
+                return ImageConversion.LoadImage_Injected(texPtr, ref span, false);
+            }
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"[CustomMedia] LoadImage icall 폴백 실패: {e.Message}");
+            return false;
         }
     }
 
-    /// <summary>VideoPlayer.url 세터도 Il2CppSystem.ReadOnlySpan 경로라 깨진다(실측) → icall 직접 호출.</summary>
+    /// <summary>
+    /// VideoPlayer.url 설정 이중 래퍼:
+    /// 1차: 표준 player.url 세터 시도
+    /// 2차: ReadOnlySpan 버그로 실패 시 set_url_Injected icall 직접 호출
+    /// </summary>
     public static unsafe void SetUrl(UnityEngine.Video.VideoPlayer player, string url)
     {
-        if (player == null || player.WasCollected) return;
-        var self = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(player);
-        fixed (char* begin = url)
+        if (player == null || player.WasCollected || string.IsNullOrEmpty(url)) return;
+
+        // 1차: 표준 프로퍼티 시도
+        try
         {
-            var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, url.Length);
-            UnityEngine.Video.VideoPlayer.set_url_Injected(self, ref span);
+            player.url = url;
+            return;
+        }
+        catch (MissingMethodException) { /* ReadOnlySpan 이슈 시 2차 폴백 진행 */ }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[CustomMedia] 표준 VideoPlayer.url 예외 발생, icall 폴백 시도: {e.Message}");
+        }
+
+        // 2차: 네이티브 icall 직접 호출
+        try
+        {
+            var self = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(player);
+            fixed (char* begin = url)
+            {
+                var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, url.Length);
+                UnityEngine.Video.VideoPlayer.set_url_Injected(self, ref span);
+            }
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"[CustomMedia] VideoPlayer.url icall 폴백 실패: {e.Message}");
         }
     }
 
@@ -130,7 +177,7 @@ internal static class SoundData_FromHEAudioClip_Patch
 {
     private static readonly HashSet<string> s_seen = new();
 
-    private static void Prefix(ref HEAudioClip audioClip)
+    private static void Prefix(ref HEAudioClip audioClip, bool isLooping, ref Il2CppSystem.Action afterDispose)
     {
         var baseId = CustomSongs.s_baseSong?.Id;
         if (baseId == null || audioClip == null) return;
@@ -143,6 +190,13 @@ internal static class SoundData_FromHEAudioClip_Patch
             if (s_seen.Add(name)) Core.Log.Msg($"[CustomMedia] 음원 로드 감지: '{name}'");
             if (!name.Contains(baseId)) return;
             audioClip = CustomMedia.GetClip(path);
+
+            // 대리자 수명 주기 및 GC 수집에 의한 크래시 방지를 위한 이중 래퍼 적용
+            if (afterDispose != null)
+            {
+                afterDispose = UpdateResilience.WrapAction(afterDispose);
+            }
+
             Core.Log.Msg($"[CustomMedia] 음원 '{name}' -> {path} ({(CustomSongs.Current != null ? "인게임" : "미리듣기")})");
         }
         catch (Exception e) { Core.Log.Error($"[CustomMedia] 음원 교체 실패: {e}"); }

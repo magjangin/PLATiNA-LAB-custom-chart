@@ -81,13 +81,31 @@ internal static class CustomCharts
 
     private static byte[] ReadAll(Il2CppSystem.IO.Stream stream)
     {
-        var ms = new Il2CppSystem.IO.MemoryStream();
-        stream.CopyTo(ms);
-        return ms.ToArray().ToArray();
+        try
+        {
+            var ms = new Il2CppSystem.IO.MemoryStream();
+            stream.CopyTo(ms);
+            return ms.ToArray().ToArray();
+        }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[CustomCharts] 스트림 읽기 예외: {e.Message}");
+            return Array.Empty<byte>();
+        }
     }
 
-    private static Il2CppSystem.IO.Stream ToStream(byte[] bytes) =>
-        new Il2CppSystem.IO.MemoryStream(new Il2CppStructArray<byte>(bytes));
+    private static Il2CppSystem.IO.Stream ToStream(byte[] bytes)
+    {
+        try
+        {
+            return new Il2CppSystem.IO.MemoryStream(new Il2CppStructArray<byte>(bytes ?? Array.Empty<byte>()));
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"[CustomCharts] MemoryStream 생성 실패: {e.Message}");
+            return new Il2CppSystem.IO.MemoryStream();
+        }
+    }
 
     /// <summary>원본 스트림을 덤프하고, 커스텀 파일이 있으면 교체된 스트림을 돌려준다.</summary>
     public static Il2CppSystem.IO.Stream Process(string key, Il2CppSystem.IO.Stream original)

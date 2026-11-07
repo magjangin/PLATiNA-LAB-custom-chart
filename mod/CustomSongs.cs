@@ -276,11 +276,11 @@ internal static class CustomSongs
             }
 
             var song = new SongInfo(baseSong);
-            song._Id_k__BackingField = custom.Id;
-            song._SonglistCategorizationTags_k__BackingField = new Il2CppStringArray(new[] { CategoryTag });
+            SetSongField(song, "Id", custom.Id);
+            SetSongField(song, "SonglistCategorizationTags", new Il2CppStringArray(new[] { CategoryTag }));
             // 실측 lockType 분포: none=180, unlisted=5(튜토리얼 등), anonymous=6, lock=4, hidden=2.
             // 보유/잠금 판정 사전은 이 시점에 아직 비어 있어 다른 곡에서 차용할 수 없으므로 일반 곡 값으로 고정.
-            song._LockTypeString_k__BackingField = "none";
+            SetSongField(song, "LockTypeString", "none");
             songs.Add(song);
 
             foreach (var chart in custom.Charts)
@@ -292,17 +292,58 @@ internal static class CustomSongs
                     if (p.GroupId == baseSong.Id && p.LineModeType == basePattern.LineModeType &&
                         string.Equals(p.Difficulty, chart.GameDifficulty, StringComparison.OrdinalIgnoreCase)) { source = p; break; }
                 var pattern = new PatternInfo(source);
-                pattern._GroupId_k__BackingField = custom.Id;
-                pattern._PatternIndex_k__BackingField = chart.PatternIndex;
-                pattern._Level_k__BackingField = chart.Level;
-                pattern._PreciseLevel_k__BackingField = chart.Level;
-                pattern._Patterner_k__BackingField = custom.Patterner;
-                pattern._Difficulty_k__BackingField = chart.GameDifficulty;
+                SetPatternField(pattern, "GroupId", custom.Id);
+                SetPatternField(pattern, "PatternIndex", chart.PatternIndex);
+                SetPatternField(pattern, "Level", chart.Level);
+                SetPatternField(pattern, "PreciseLevel", (float)chart.Level);
+                SetPatternField(pattern, "Patterner", custom.Patterner);
+                SetPatternField(pattern, "Difficulty", chart.GameDifficulty);
                 patterns.Add(pattern);
                 chart.Pattern = pattern;
                 Core.Log.Msg($"[CustomSongs] 주입: {custom.Id} '{custom.Title}' {pattern.Difficulty} Lv{chart.Level} (pattern {chart.PatternIndex}, 기반 {source.FilePath}) -> {pattern.FindSongInfo()?.Id ?? "null"}");
             }
         }
+    }
+
+    /// <summary>
+    /// 게임 업데이트로 SongInfo 백킹 필드 이름이 변경되어도 안전하게 주입하는 이중 래퍼
+    /// </summary>
+    private static void SetSongField(SongInfo song, string propName, object value)
+    {
+        if (UpdateResilience.SafeSetFieldOrProperty(song, propName, value)) return;
+        // 직접 필드 폴백
+        try
+        {
+            switch (propName)
+            {
+                case "Id": song._Id_k__BackingField = (string)value; break;
+                case "SonglistCategorizationTags": song._SonglistCategorizationTags_k__BackingField = (Il2CppStringArray)value; break;
+                case "LockTypeString": song._LockTypeString_k__BackingField = (string)value; break;
+            }
+        }
+        catch (Exception e) { Core.Log.Warning($"[CustomSongs] SongInfo.{propName} 설정 폴백 실패: {e.Message}"); }
+    }
+
+    /// <summary>
+    /// 게임 업데이트로 PatternInfo 백킹 필드 이름이 변경되어도 안전하게 주입하는 이중 래퍼
+    /// </summary>
+    private static void SetPatternField(PatternInfo pattern, string propName, object value)
+    {
+        if (UpdateResilience.SafeSetFieldOrProperty(pattern, propName, value)) return;
+        // 직접 필드 폴백
+        try
+        {
+            switch (propName)
+            {
+                case "GroupId": pattern._GroupId_k__BackingField = (string)value; break;
+                case "PatternIndex": pattern._PatternIndex_k__BackingField = (int)value; break;
+                case "Level": pattern._Level_k__BackingField = (int)value; break;
+                case "PreciseLevel": pattern._PreciseLevel_k__BackingField = Convert.ToSingle(value); break;
+                case "Patterner": pattern._Patterner_k__BackingField = (string)value; break;
+                case "Difficulty": pattern._Difficulty_k__BackingField = (string)value; break;
+            }
+        }
+        catch (Exception e) { Core.Log.Warning($"[CustomSongs] PatternInfo.{propName} 설정 폴백 실패: {e.Message}"); }
     }
 
     /// <summary>기반 차트에서 가장 앞의 노트 하나만 남긴 PPP JSON (곡 폴더에 chart.json이 없을 때 템플릿).</summary>
@@ -549,6 +590,11 @@ internal static class PatternPlayer_DetermineRunning_HoldEnd_Patch
     }
 
     private static void Postfix(Il2CppPlatinaLab.Main.InGame.PatternPlayer __instance, bool __state)
+    {
+        if (__state && __instance != null) __instance._isLastNoteProcessingTriggered = false;
+    }
+
+    private static void Finalizer(Il2CppPlatinaLab.Main.InGame.PatternPlayer __instance, bool __state)
     {
         if (__state && __instance != null) __instance._isLastNoteProcessingTriggered = false;
     }
