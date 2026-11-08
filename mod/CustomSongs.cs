@@ -224,6 +224,7 @@ internal static class CustomSongs
 
     public static void Inject()
     {
+        if (!ModHealth.CustomSongsAllowed) return;
         var mgr = SongDataManager.Instance;
         if (mgr == null) { Core.Log.Warning("[CustomSongs] SongDataManager 없음"); return; }
 
@@ -335,45 +336,48 @@ internal static class CustomSongs
 
     /// <summary>
     /// SongInfo 멤버를 이름으로 찾아 설정하고, 실패하면 직접 필드 대입으로 넘어간다.
-    /// 주의: 아래 직접 참조한 백킹 필드가 업데이트로 사라지면 JIT 단계에서 메서드 전체가 실패한다. (docs/update_resilience_audit.md H2)
+    /// 직접 대입은 별도 메서드로 분리한다. 같은 메서드에 두면 그 필드가 사라질 때 JIT 단계에서 이름 기반 경로까지 함께 실패한다.
     /// </summary>
     private static void SetSongField(SongInfo song, string propName, object value)
     {
         if (UpdateResilience.SafeSetFieldOrProperty(song, propName, value)) return;
-        // 직접 필드 폴백
-        try
-        {
-            switch (propName)
-            {
-                case "Id": song._Id_k__BackingField = (string)value; break;
-                case "SonglistCategorizationTags": song._SonglistCategorizationTags_k__BackingField = (Il2CppStringArray)value; break;
-                case "LockTypeString": song._LockTypeString_k__BackingField = (string)value; break;
-            }
-        }
+        try { SetSongFieldDirect(song, propName, value); }
         catch (Exception e) { Core.Log.Warning($"[CustomSongs] SongInfo.{propName} 설정 폴백 실패: {e.Message}"); }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void SetSongFieldDirect(SongInfo song, string propName, object value)
+    {
+        switch (propName)
+        {
+            case "Id": song._Id_k__BackingField = (string)value; break;
+            case "SonglistCategorizationTags": song._SonglistCategorizationTags_k__BackingField = (Il2CppStringArray)value; break;
+            case "LockTypeString": song._LockTypeString_k__BackingField = (string)value; break;
+        }
+    }
+
     /// <summary>
-    /// PatternInfo 멤버를 이름으로 찾아 설정하고, 실패하면 직접 필드 대입으로 넘어간다.
-    /// 주의: 아래 직접 참조한 백킹 필드가 업데이트로 사라지면 JIT 단계에서 메서드 전체가 실패한다. (docs/update_resilience_audit.md H2)
+    /// PatternInfo 멤버를 이름으로 찾아 설정하고, 실패하면 직접 필드 대입으로 넘어간다 (분리 이유는 SetSongField와 같다).
     /// </summary>
     private static void SetPatternField(PatternInfo pattern, string propName, object value)
     {
         if (UpdateResilience.SafeSetFieldOrProperty(pattern, propName, value)) return;
-        // 직접 필드 폴백
-        try
-        {
-            switch (propName)
-            {
-                case "GroupId": pattern._GroupId_k__BackingField = (string)value; break;
-                case "PatternIndex": pattern._PatternIndex_k__BackingField = (int)value; break;
-                case "Level": pattern._Level_k__BackingField = (int)value; break;
-                case "PreciseLevel": pattern._PreciseLevel_k__BackingField = Convert.ToSingle(value); break;
-                case "Patterner": pattern._Patterner_k__BackingField = (string)value; break;
-                case "Difficulty": pattern._Difficulty_k__BackingField = (string)value; break;
-            }
-        }
+        try { SetPatternFieldDirect(pattern, propName, value); }
         catch (Exception e) { Core.Log.Warning($"[CustomSongs] PatternInfo.{propName} 설정 폴백 실패: {e.Message}"); }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void SetPatternFieldDirect(PatternInfo pattern, string propName, object value)
+    {
+        switch (propName)
+        {
+            case "GroupId": pattern._GroupId_k__BackingField = (string)value; break;
+            case "PatternIndex": pattern._PatternIndex_k__BackingField = (int)value; break;
+            case "Level": pattern._Level_k__BackingField = (int)value; break;
+            case "PreciseLevel": pattern._PreciseLevel_k__BackingField = Convert.ToSingle(value); break;
+            case "Patterner": pattern._Patterner_k__BackingField = (string)value; break;
+            case "Difficulty": pattern._Difficulty_k__BackingField = (string)value; break;
+        }
     }
 
     /// <summary>기반 차트에서 가장 앞의 노트 하나만 남긴 PPP JSON (곡 폴더에 chart.json이 없을 때 템플릿).</summary>
@@ -444,17 +448,6 @@ internal static class CustomSongs
         if (needed <= current) return;
         root["endPosition"] = needed;
         Core.Log.Msg($"[CustomSongs] {song.Id} endPosition {current} → {needed} (music {music:F1}s, video {video:F1}s, bpm {bpm})");
-    }
-}
-
-[HarmonyPatch(typeof(SongListBuilder), nameof(SongListBuilder.Build))]
-internal static class SongListBuilder_Build_Patch
-{
-    private static void Prefix()
-    {
-        Core.Log.Msg("[CustomSongs] SongListBuilder.Build");
-        try { CustomSongs.Inject(); }
-        catch (Exception e) { Core.Log.Error($"[CustomSongs] 주입 실패: {e}"); }
     }
 }
 

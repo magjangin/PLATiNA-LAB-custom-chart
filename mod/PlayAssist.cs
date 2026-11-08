@@ -23,12 +23,21 @@ internal static class PlayAssist
 {
     private static bool s_overriding;
     private static InGameSettingType.Extra s_savedExtra;
+    private static InGameSettingType.Extra s_autoPlayValue;
+    private const string AutoPlayName = "AutoPlay";
 
     public static bool AllPerfectActive => ModConfig.AllPerfect && CustomSongs.Current != null;
 
     public static void ApplyAutoPlay()
     {
         if (!ModConfig.AutoPlay) { RestoreAutoPlay(); return; }
+        // enum 상수는 컴파일 시 숫자로 박히므로, 게임이 값을 재배치해도 맞도록 런타임에 이름으로 찾는다
+        if (!Enum.TryParse(AutoPlayName, out InGameSettingType.Extra autoPlay))
+        {
+            Core.Log.Error($"[AutoPlay] Extra.{AutoPlayName} 값을 찾지 못해 끕니다");
+            RestoreAutoPlay();
+            return;
+        }
         var extra = InGameSettingManager.Instance?.Extra;
         if (extra == null) { Core.Log.Warning("[AutoPlay] InGameSettingManager 없음"); return; }
         if (!s_overriding)
@@ -36,9 +45,29 @@ internal static class PlayAssist
             s_savedExtra = extra.Extra;
             s_overriding = true;
         }
-        extra.SetExtra(InGameSettingType.Extra.AutoPlay);
+        s_autoPlayValue = autoPlay;
+        extra.SetExtra(autoPlay);
+
+        // 기록 보호는 게임의 IsScorable()이 맡는다. 기록이 남는 상태거나 확인할 수 없으면 오토 플레이를 쓰지 않는다
+        bool scorable;
+        try { scorable = ReadIsScorable(); }
+        catch (Exception e)
+        {
+            Core.Log.Error($"[AutoPlay] IsScorable 확인 실패로 끕니다: {e.Message}");
+            RestoreAutoPlay();
+            return;
+        }
+        if (scorable)
+        {
+            Core.Log.Error("[AutoPlay] 오토 플레이 상태인데 기록이 남는 설정으로 확인되어 끕니다");
+            RestoreAutoPlay();
+            return;
+        }
         Core.Log.Msg($"[AutoPlay] 켬 (원래 Extra={s_savedExtra})");
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool ReadIsScorable() => Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper.IsScorable();
 
     public static void RestoreAutoPlay()
     {
@@ -71,6 +100,7 @@ internal static class PlayAssist
             PlayOverlay.InPlay = false;
             try { RestoreAutoPlay(); }
             catch (Exception e) { Core.Log.Error($"[AutoPlay] 복원 실패: {e}"); }
+            ModHealth.ReportPlay();
         }
     }
 
@@ -84,7 +114,7 @@ internal static class PlayAssist
 
         private static void Postfix(InGameSettingManager __instance)
         {
-            if (s_overriding) __instance?.Extra?.SetExtra(InGameSettingType.Extra.AutoPlay);
+            if (s_overriding) __instance?.Extra?.SetExtra(s_autoPlayValue);
         }
     }
 
@@ -92,6 +122,7 @@ internal static class PlayAssist
     private static class PatternPlayer_ProcessJudgeResult_Patch
     {
         private static int s_logged;
+        private static bool s_setFailureLogged;
 
         private static void Prefix(JudgeResult judgeResult)
         {
@@ -115,7 +146,11 @@ internal static class PlayAssist
                 if (AllPerfectActive && judgment != JudgmentType.PerfectHigh && judgment != JudgmentType.Undefined)
                 {
                     try { judgeResult.Judgment = JudgmentType.PerfectHigh; } catch { }
-                    UpdateResilience.SafeSetFieldOrProperty(judgeResult, "Judgment", JudgmentType.PerfectHigh);
+                    if (!UpdateResilience.SafeSetFieldOrProperty(judgeResult, "Judgment", JudgmentType.PerfectHigh) && !s_setFailureLogged)
+                    {
+                        s_setFailureLogged = true;
+                        Core.Log.Warning("[PlayAssist] 올 퍼펙트: JudgeResult.Judgment 설정 실패");
+                    }
                 }
             }
             catch (Exception e) { Core.Log.Warning($"[PlayAssist] 판정 처리 오류: {e.Message}"); }

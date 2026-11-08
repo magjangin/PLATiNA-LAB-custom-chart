@@ -9,10 +9,12 @@ namespace PLATiNALAB.Mod;
 public class Core : MelonMod
 {
     public static MelonLogger.Instance Log { get; private set; }
+    public static HarmonyLib.Harmony Patcher { get; private set; }
 
     public override void OnInitializeMelon()
     {
         Log = LoggerInstance;
+        Patcher = HarmonyInstance;
         Log.Msg("==================================================");
         Log.Msg("[PLATiNALAB.Mod] PLATiNA LAB Mod Skeleton Loaded!");
         Log.Msg("==================================================");
@@ -21,6 +23,8 @@ public class Core : MelonMod
         CustomSongs.Scan();
         AddressableKeyRedirect.Apply(HarmonyInstance);
     }
+
+    public override void OnLateInitializeMelon() => ModHealth.CheckOnStart();
 
     public override void OnUpdate() => PlayOverlay.Update();
 }

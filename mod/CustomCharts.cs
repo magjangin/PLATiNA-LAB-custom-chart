@@ -228,6 +228,7 @@ internal static class PatternParser_Parse_PlayerStream_Patch
         try
         {
             patternStream = CustomCharts.Process(CustomCharts.KeyOf(patternPlayer), patternStream);
+            ModHealth.Mark("Parse");
         }
         catch (Exception e) { Core.Log.Error($"[CustomCharts] Parse(Player,Stream) 처리 실패: {e}"); }
         CustomCharts.Handling = true;

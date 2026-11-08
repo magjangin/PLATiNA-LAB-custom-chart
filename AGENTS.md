@@ -96,11 +96,13 @@
   - **UI 오브젝트 상한 풀링 (`PlayOverlay.UpdateJudgmentBar`):** 판정 틱 Image 오브젝트를 최대 32개로 상한 제한하여 무한 생성 방지.
   - **영문 축약형/공백 자동 교정 (`TextSanitizer`):** 영문 텍스트 내 비정상적 아포스트로피 띄어쓰기(`you'  re` → `you're`, `don ' t` → `don't`), 특수 따옴표 및 연속 공백을 정규화하여 info.txt 및 BMS 타이틀에 자동 적용.
   - **공개 문서화 최신화 (`README.md`):** 판정바/키뷰어, 오토플레이/올퍼펙트, 중국어/다국어 인코딩, 설정 가이드 전면 반영.
-- **업데이트 내성 및 이중 래퍼(Double-Wrapper) 강화 (2026-11-07, 2026-11-08 감사로 범위 정정):** 재빌드 없이 게임 업데이트를 넘기는 것까지 보장하지는 않는다. 같은 메서드의 `try`는 그 메서드가 직접 참조한 멤버의 누락을 잡지 못한다(JIT 단계 실패, .NET 6 실측). 상세는 `docs/update_resilience_audit.md`.
-  - **백킹 필드 & 프로퍼티 동적 래퍼 (`UpdateResilience.SafeSetFieldOrProperty`):** 프로퍼티 setter 및 다양한 백킹 필드 형식(_k__BackingField, m_, _ 등)을 순차 탐색해 주입. 후보 이름 밖으로 바뀌면 `false`만 반환. 호출부 `SetSongField`/`SetPatternField`는 직접 필드 참조가 함께 있어 그 필드가 사라지면 메서드 전체가 실패.
-  - **네이티브 icall 이중 래퍼 (`CustomMedia.LoadImage`, `SetUrl`):** 1차 공식 Unity API 호출 -> Unity 래퍼 본문의 ReadOnlySpan 이슈(MissingMethodException) 시 2차 네이티브 icall fallback. 2차에서 쓰는 icall/마샬링 심볼 자체가 사라지면 메서드 전체가 실패.
+- **업데이트 내성 및 이중 래퍼(Double-Wrapper) 강화 (2026-11-07, 2026-11-08 감사로 범위 정정):** 재빌드 없이 게임 업데이트를 넘기는 것까지 보장하지는 않는다. 같은 메서드의 `try`는 그 메서드가 직접 참조한 멤버의 누락을 잡지 못하므로(JIT 단계 실패, .NET 6 실측) 폴백의 직접 참조는 `[MethodImpl(NoInlining)]` 별도 메서드로 분리한다. 상세는 `docs/update_resilience_audit.md`.
+  - **상태 점검 (`ModHealth`, 2026-11-08):** 시작 시 Steam buildid를 기준과 비교해 로그, 필수 패치(서버 3종, Parse, 곡 목록·SongInfo 가드, Locate) 누락 시 커스텀 곡 주입 중단, 커스텀 곡 플레이마다 핵심 훅 호출 여부를 씬 종료 시 로그. 시작 단계 실기 확인(필수 패치 10종 + Locate 3건), 플레이 단계 미확인.
+  - **오토 플레이 안전장치 (`PlayAssist.ApplyAutoPlay`, 2026-11-08):** `Extra.AutoPlay`를 런타임에 이름으로 찾고, 적용 후 `IsScorable()`이 true거나 확인 불가면 원래 값으로 복원. 인게임 미확인.
+  - **백킹 필드 & 프로퍼티 동적 래퍼 (`UpdateResilience.SafeSetFieldOrProperty`):** 프로퍼티 setter 및 다양한 백킹 필드 형식(_k__BackingField, m_, _ 등)을 순차 탐색해 주입. 후보 이름 밖으로 바뀌면 `false`를 반환하고, 호출부 `SetSongField`/`SetPatternField`는 별도 메서드의 직접 필드 대입으로 넘어간다.
+  - **네이티브 icall 이중 래퍼 (`CustomMedia.LoadImage`, `SetUrl`):** 1차 공식 Unity API 호출 -> Unity 래퍼 본문의 ReadOnlySpan 이슈(MissingMethodException) 시 2차 네이티브 icall fallback. 두 경로는 별도 메서드로 분리되어 한쪽 심볼이 사라져도 다른 쪽을 시도한다.
   - **오디오 콜백(Action) 예외 래퍼 (`UpdateResilience.WrapAction`):** `SoundData.FromHEAudioClip`의 `afterDispose` 콜백을 람다로 감싸 try-catch로 실행하고, 인터롭을 통해 관리 코드로 올라온 예외를 경고 로그로 격리. 네이티브 크래시(AV 등)는 막지 못하며, GC 수명 문제의 대책으로 검증된 적 없음(해당 크래시 재현 기록 없음).
-  - **결과 레코드 생성 폴백 (`OfflineSession.BuildLocalRecord`):** 직접 생성이 런타임 예외로 실패하면 Reflection으로 생성자를 순회해 인스턴스화. 단 생성자 시그니처가 바뀌면 직접 호출 때문에 JIT 단계에서 메서드 전체가 실패해 폴백에 도달하지 못하고 `NetworkError`를 반환.
+  - **결과 레코드 생성 폴백 (`OfflineSession.BuildLocalRecord`):** `CreateRecordDirect`(별도 메서드)가 실패하면 Reflection으로 `(IntPtr)`·복사 생성자를 뺀 생성자를 후보별로 시도. 모두 실패하면 `NetworkError` 반환.
   - **Addressables 탐색 및 오버레이 방어 강화 (`AddressableKeyRedirect`, `PlayOverlay`):** Locate 메서드 탐색 유연성 및 메모리 unbox 전 포인터 유효성 검사 강화.
 
 ---
@@ -118,8 +120,8 @@
    - `Il2CppPlatinaLab.Main.InGame.PatternPlayer.ProcessJudgeResult(JudgeResult)`: 판정 결과 인터셉트 (`JudgmentType.PerfectHigh` 주입 타깃).
    - `Il2CppPlatinaLab.Main.InGame.PatternPlayer.ProcessTickResult(JudgmentType)`
 3. **선곡 및 곡 해금 우회:**
-   - `Il2CppPlatinaLab.Main.Director.SongSelectDirector.IsLock()`: 잠금 해제 우회 (`false` 반환).
-   - `Il2CppPlatinaLab.Main.Director.SongSelectDirector.IsNotOwned()`: 미보유 곡 제한 우회 (`false` 반환).
+   - `Il2CppPlatinaLab.Main.Director.SongSelectDirector.IsLock()`: 잠금 해제 우회 후보 (현재 패치하지 않음).
+   - `Il2CppPlatinaLab.Main.Director.SongSelectDirector.IsNotOwned()`: 미보유 곡 제한 우회 후보 (현재 패치하지 않음).
 
 ---
 
@@ -165,5 +167,5 @@
 - BPM 변속이 있는 차트의 길이 계산 (현재 initialBpm 기준 근사, 경고 로그).
 - 결과 화면 `SectionDetailPanelController.Initialize` NRE 해소 (섹션 기록/캐시 쪽 추정).
 - 결과 score가 로그상 0 (`GameEndResult.FinalScore`) — 화면 표시와 일치 여부 확인.
-- 업데이트 내성 감사의 미해결 항목(H1~H3, M1~M5): `docs/update_resilience_audit.md`.
+- 2026-11-08 업데이트 내성 수정분의 플레이 단계 확인: 커스텀 곡 선택 → 플레이 → 결과 화면, `[Health] ... 핵심 훅 호출 정상` 로그. 처리 내역은 `docs/update_resilience_audit.md`.
 - 정적 분석 도구: `scratchpad/calls.py` 방식 — `dummy_dll`을 ilspycmd로 풀어 `[Address(RVA=..)]` 맵을 만들고 capstone으로 GameAssembly.dll 함수의 call 대상을 이름 붙여 출력.

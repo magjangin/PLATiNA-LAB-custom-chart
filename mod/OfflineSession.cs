@@ -31,7 +31,9 @@ internal static class InGameSurface_RequestGameStart_Patch
             CustomSongs.Current = CustomSongs.ByPatternIndex(patternId);
             if (CustomSongs.Current == null) return true;
             var session = new GameSessionResult();
-            UpdateResilience.SafeSetFieldOrProperty(session, "Token", OfflineSession.Token);
+            if (!UpdateResilience.SafeSetFieldOrProperty(session, "Token", OfflineSession.Token))
+                Core.Log.Warning("[OfflineSession] 세션 Token 설정 실패: RenewGameSession이 서버로 갈 수 있음");
+            ModHealth.BeginPlay(CustomSongs.Current.Song);
             __result = new UniTask<SurfaceResult<GameSessionResult>>(SurfaceResult<GameSessionResult>.Success(session));
             Core.Log.Msg($"[OfflineSession] RequestGameStart({patternId}) 서버 호출 생략, 로컬 세션 발급");
             return false;
@@ -87,8 +89,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// 서버 응답 없이 결과 화면에 넘길 레코드를 만든다.
     /// RecordUpdateHelper.UpdatePatternRecordAndBuildSnapshot은 세이브에 패턴 990001 기록을 남기므로 쓰지 않고,
     /// 스냅샷은 Record* 메서드로 직접 채운다 (이전 값 0 → 이번 값).
-    /// 주의: 직접 생성자 호출이 이 메서드 안에 있어, 생성자 시그니처가 바뀌면 JIT 단계에서 메서드 전체가 실패하고 아래 Reflection 폴백에 도달하지 못한다.
-    /// 폴백은 생성자 실행 중 예외가 날 때만 동작한다. (docs/update_resilience_audit.md H1)
+    /// 직접 생성자 호출은 CreateRecordDirect로 분리했다. 같은 메서드에 두면 시그니처가 바뀔 때 JIT 단계에서 메서드 전체가 실패해 Reflection 폴백에 도달하지 못한다.
     /// </summary>
     private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request)
     {
@@ -108,11 +109,7 @@ internal static class InGameSurface_SendGameEnd_Patch
         var snapshot = new GameEndResultSnapShot();
         try
         {
-            var zeroMastery = new Il2CppPlatinaLab.Main.Common.Types.Mastery(0);
-            snapshot.RecordPatternScore(0, finalScore);
-            snapshot.RecordPatternAccuracy(new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0), new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0));
-            snapshot.RecordPatternMastery(zeroMastery, zeroMastery);
-            snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
+            FillSnapshot(snapshot, finalScore);
         }
         catch (Exception e)
         {
@@ -124,21 +121,21 @@ internal static class InGameSurface_SendGameEnd_Patch
         // 1차: 표준 직접 생성자 호출
         try
         {
-            return new FreeModePlayRecordV2(request, snapshot, response, null, null, emptyFeatureList);
+            return CreateRecordDirect(request, snapshot, response, emptyFeatureList);
         }
-        catch (MissingMethodException) { /* 생성자 내부에서 발생한 경우만 해당. 이 호출 자체의 시그니처 불일치는 JIT에서 실패해 여기로 오지 않는다 */ }
         catch (Exception e)
         {
             Core.Log.Warning($"[OfflineSession] FreeModePlayRecordV2 직접 생성 실패, 동적 생성자 폴백: {e.Message}");
         }
 
         // 2차: Reflection을 통한 동적 생성자 탐색
-        try
+        foreach (var ctor in typeof(FreeModePlayRecordV2).GetConstructors())
         {
-            var ctors = typeof(FreeModePlayRecordV2).GetConstructors();
-            foreach (var ctor in ctors)
+            var parms = ctor.GetParameters();
+            // 인터롭 공통 생성자(IntPtr)와 복사 생성자는 레코드를 새로 만들 수 없다
+            if (parms.Length == 1 && (parms[0].ParameterType == typeof(IntPtr) || parms[0].ParameterType == typeof(FreeModePlayRecordV2))) continue;
+            try
             {
-                var parms = ctor.GetParameters();
                 var args = new object[parms.Length];
                 for (int i = 0; i < parms.Length; i++)
                 {
@@ -149,20 +146,37 @@ internal static class InGameSurface_SendGameEnd_Patch
                     else if (pType.IsAssignableFrom(typeof(Il2CppSystem.Collections.Generic.List<Il2CppPlatinaLab.Main.Common.FeatureId>))) args[i] = emptyFeatureList;
                     else args[i] = pType.IsValueType ? Activator.CreateInstance(pType) : null;
                 }
-                var instance = ctor.Invoke(args);
-                if (instance is FreeModePlayRecordV2 record)
+                if (ctor.Invoke(args) is FreeModePlayRecordV2 record)
                 {
                     Core.Log.Msg($"[OfflineSession] FreeModePlayRecordV2 동적 생성 성공 (파라미터 {parms.Length}개)");
                     return record;
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            Core.Log.Error($"[OfflineSession] FreeModePlayRecordV2 동적 생성마저 실패: {ex}");
+            catch (Exception ex)
+            {
+                Core.Log.Warning($"[OfflineSession] FreeModePlayRecordV2 생성자(파라미터 {parms.Length}개) 실패: {ex.GetBaseException().Message}");
+            }
         }
 
+        Core.Log.Error("[OfflineSession] FreeModePlayRecordV2를 만들 수 있는 생성자가 없음");
         return null;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void FillSnapshot(GameEndResultSnapShot snapshot, int finalScore)
+    {
+        var zeroMastery = new Il2CppPlatinaLab.Main.Common.Types.Mastery(0);
+        snapshot.RecordPatternScore(0, finalScore);
+        snapshot.RecordPatternAccuracy(new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0), new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0));
+        snapshot.RecordPatternMastery(zeroMastery, zeroMastery);
+        snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static FreeModePlayRecordV2 CreateRecordDirect(GameEndResult request, GameEndResultSnapShot snapshot, EndGameResponse response,
+        Il2CppSystem.Collections.Generic.List<Il2CppPlatinaLab.Main.Common.FeatureId> features)
+    {
+        return new FreeModePlayRecordV2(request, snapshot, response, null, null, features);
     }
 }
 

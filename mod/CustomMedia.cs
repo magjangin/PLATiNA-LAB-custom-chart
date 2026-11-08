@@ -47,14 +47,14 @@ internal static class CustomMedia
     /// 1차: Unity 공식 ImageConversion.LoadImage 시도 (MelonLoader/Unity 인터롭 정상화 시 동작)
     /// 2차: MissingMethodException(ReadOnlySpan 버그) 시 네이티브 icall(LoadImage_Injected) 직접 호출
     /// </summary>
-    private static unsafe bool LoadImage(Texture2D tex, byte[] bytes)
+    private static bool LoadImage(Texture2D tex, byte[] bytes)
     {
         if (tex == null || tex.WasCollected || bytes == null || bytes.Length == 0) return false;
 
         // 1차: 표준 공식 API 시도
         try
         {
-            if (ImageConversion.LoadImage(tex, bytes)) return true;
+            if (LoadImageStandard(tex, bytes)) return true;
         }
         catch (MissingMethodException) { /* ReadOnlySpan 이슈 발생 시 2차 폴백 진행 */ }
         catch (Exception e)
@@ -65,12 +65,7 @@ internal static class CustomMedia
         // 2차: 네이티브 icall 직접 호출
         try
         {
-            var texPtr = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(tex);
-            fixed (byte* begin = bytes)
-            {
-                var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, bytes.Length);
-                return ImageConversion.LoadImage_Injected(texPtr, ref span, false);
-            }
+            return LoadImageIcall(tex, bytes);
         }
         catch (Exception e)
         {
@@ -79,19 +74,34 @@ internal static class CustomMedia
         }
     }
 
+    // 두 경로를 별도 메서드로 나눈다. 한 메서드에 두면 어느 한쪽 심볼이 사라질 때 JIT 단계에서 양쪽 다 실패한다.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool LoadImageStandard(Texture2D tex, byte[] bytes) => ImageConversion.LoadImage(tex, bytes);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static unsafe bool LoadImageIcall(Texture2D tex, byte[] bytes)
+    {
+        var texPtr = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(tex);
+        fixed (byte* begin = bytes)
+        {
+            var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, bytes.Length);
+            return ImageConversion.LoadImage_Injected(texPtr, ref span, false);
+        }
+    }
+
     /// <summary>
     /// VideoPlayer.url 설정 이중 래퍼:
     /// 1차: 표준 player.url 세터 시도
     /// 2차: ReadOnlySpan 버그로 실패 시 set_url_Injected icall 직접 호출
     /// </summary>
-    public static unsafe void SetUrl(UnityEngine.Video.VideoPlayer player, string url)
+    public static void SetUrl(UnityEngine.Video.VideoPlayer player, string url)
     {
         if (player == null || player.WasCollected || string.IsNullOrEmpty(url)) return;
 
         // 1차: 표준 프로퍼티 시도
         try
         {
-            player.url = url;
+            SetUrlStandard(player, url);
             return;
         }
         catch (MissingMethodException) { /* ReadOnlySpan 이슈 시 2차 폴백 진행 */ }
@@ -103,16 +113,25 @@ internal static class CustomMedia
         // 2차: 네이티브 icall 직접 호출
         try
         {
-            var self = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(player);
-            fixed (char* begin = url)
-            {
-                var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, url.Length);
-                UnityEngine.Video.VideoPlayer.set_url_Injected(self, ref span);
-            }
+            SetUrlIcall(player, url);
         }
         catch (Exception e)
         {
             Core.Log.Error($"[CustomMedia] VideoPlayer.url icall 폴백 실패: {e.Message}");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void SetUrlStandard(UnityEngine.Video.VideoPlayer player, string url) => player.url = url;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static unsafe void SetUrlIcall(UnityEngine.Video.VideoPlayer player, string url)
+    {
+        var self = UnityEngine.Object.MarshalledUnityObject.MarshalNotNull(player);
+        fixed (char* begin = url)
+        {
+            var span = new UnityEngine.Bindings.ManagedSpanWrapper(begin, url.Length);
+            UnityEngine.Video.VideoPlayer.set_url_Injected(self, ref span);
         }
     }
 
@@ -217,6 +236,7 @@ internal static class SoundData_FromHEAudioClip_Patch
             if (s_seen.Add(name)) Core.Log.Msg($"[CustomMedia] 음원 로드 감지: '{name}'");
             if (!name.Contains(baseId)) return;
             audioClip = CustomMedia.GetClip(path);
+            ModHealth.Mark("Music");
 
             // afterDispose 실행 중 예외를 경고 로그로 격리하는 try-catch 래퍼 (GC 수명 대책은 아님)
             if (afterDispose != null)
@@ -243,6 +263,7 @@ internal static class BGAPlayer_SetClip_Patch
             if (player == null || player.WasCollected) return;
             player.source = UnityEngine.Video.VideoSource.Url;
             CustomMedia.SetUrl(player, new Uri(path).AbsoluteUri);
+            ModHealth.Mark("Video");
             player.isLooping = isLooping;
             player.Prepare();
             Core.Log.Msg($"[CustomMedia] BGA <- {path}");

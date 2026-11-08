@@ -8,8 +8,9 @@ namespace PLATiNALAB.Mod;
 /// </summary>
 internal static class UpdateResilience
 {
-    private static readonly Dictionary<(Type, string), FieldInfo> s_fieldCache = new();
-    private static readonly Dictionary<(Type, string), PropertyInfo> s_propertyCache = new();
+    // 판정 훅(게임 루프 스레드)과 메인 스레드가 함께 쓴다. 못 찾은 결과(null)도 저장해 매번 다시 탐색하지 않는다.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), FieldInfo> s_fieldCache = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), PropertyInfo> s_propertyCache = new();
 
     /// <summary>
     /// 프로퍼티 또는 백킹 필드를 찾아 안전하게 값을 설정한다.
@@ -26,7 +27,7 @@ internal static class UpdateResilience
         if (!s_propertyCache.TryGetValue(propKey, out var prop))
         {
             prop = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (prop != null) s_propertyCache[propKey] = prop;
+            s_propertyCache[propKey] = prop;
         }
 
         if (prop != null && prop.CanWrite)
@@ -59,7 +60,7 @@ internal static class UpdateResilience
                 if (field != null) break;
             }
 
-            if (field != null) s_fieldCache[fieldKey] = field;
+            s_fieldCache[fieldKey] = field;
         }
 
         if (field != null)
@@ -88,7 +89,7 @@ internal static class UpdateResilience
         if (!s_propertyCache.TryGetValue(propKey, out var prop))
         {
             prop = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (prop != null) s_propertyCache[propKey] = prop;
+            s_propertyCache[propKey] = prop;
         }
 
         if (prop != null && prop.CanRead)
@@ -121,7 +122,7 @@ internal static class UpdateResilience
                 if (field != null) break;
             }
 
-            if (field != null) s_fieldCache[fieldKey] = field;
+            s_fieldCache[fieldKey] = field;
         }
 
         if (field != null)
