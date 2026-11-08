@@ -69,7 +69,7 @@
 - **sxtg2 기능 포팅: 설정 파일 / 오토 플레이 / 올 퍼펙트 / 판정바 / 키뷰어 (2026-10-31)** — `mod/ModConfig.cs`, `mod/PlayAssist.cs`, `mod/PlayOverlay.cs`. 원본은 `H:\source\repos\sxtg2\sxtg2-mod` (Mono, IMGUI).
   - 설정: `<게임>\SaveCustomKey\config.txt` (sxtg2와 같은 위치·형식, 없으면 주석 포함 기본 파일 생성). `PlayDirector.Awake` Prefix마다 다시 읽음 → 다음 곡부터 반영.
   - 오토 플레이: 게임 내장 모드(`InGameSettingType.Extra.AutoPlay`). `InGameSettingHelper.IsAutoPlayMode()`(RVA 0x2CD2680)는 `Instance.Extra.Extra == 1` 비교인데 직접 호출이 없어(인라인) 패치 불가 → `PlayDirector.Awake`에서 `ExtraScheme.SetExtra(AutoPlay)`, `OnDestroy`에서 원래 값 복원. `InGameSettingManager.Save` 앞뒤로 원래 값을 잠시 되돌려 PlayerPrefs에 저장되지 않게 함. `IsScorable()`은 Extra ∈ {AutoPlay, NoDeath, PartyTime}이면 false → 게임이 스스로 기록 안 남김. **인게임 미확인.**
-  - 올 퍼펙트: `PatternPlayer.ProcessJudgeResult(JudgeResult)` Prefix에서 `judgeResult.Judgment = PerfectHigh`(JudgeResult는 인터롭에서 박싱 래퍼라 세터가 원본 호출에 반영되는 것으로 예상), `ProcessTickResult(ref JudgmentType)`도 PerfectHigh. 서버 랭킹 게임이라 **커스텀 곡(`CustomSongs.Current != null`)에서만** 동작. 점수·결과 화면 반영은 **미확인**.
+  - 올 퍼펙트: `PatternPlayer.ProcessJudgeResult(JudgeResult)` Prefix에서 `judgeResult.Judgment = PerfectHigh`(JudgeResult는 인터롭에서 박싱 래퍼라 세터가 원본 호출에 반영되는 것으로 예상), `ProcessTickResult(ref JudgmentType)`도 PerfectHigh. 서버 랭킹 게임이라 **커스텀 곡(`CustomSongs.Current != null`)에서만** 동작. 2026-11-08 실기 확인: 결과 화면 PERFECT HIGH 552/552, 점수 반영.
   - 판정바: 같은 Prefix에서 `JudgeResult.Error`(ms, double; `TimingOffsetMilliseconds`는 같은 값의 정수) 수집. 게임은 error < 0이 FAST(`UpdateFastSlow` → `ScoreRecorderUtility.AddRecord(isFast: 0 > error)`) → 화면은 부호 반전(+ = FAST). 범위는 `Constants.JudgmentTimingMap` 실측 PerfectHigh ±25 / Perfect ±50 / Great ±80 / Good ±120 ms. 2026-10-31 실기 확인(로그 error=-7.1/23.2/51.1 등, 화면 왼쪽 세로 바 표시).
   - 키뷰어: `PatternPlayer.ProcessInputEvent(InputEvent{double Timestamp, ushort KeyCode, bool IsPressed})` Prefix. 키코드 → 레인은 `InputStateMachine.GetKeyBindingArray(LineMode)` 순서 + `GetPitchKey(LineMode)`(피치 칸). 키코드 = RawKeycode(상위 바이트 0xE0 = 확장키, 하위 = 스캔코드) → `user32!GetKeyNameTextW`로 라벨. 실측 FourLines: A S ; ' + 피치 Enter (0x1E 0x1F 0x27 0x28, 피치 0x1C). 2026-10-31 실기 확인.
   - 그리기: 화면 오버레이 Canvas(sortingOrder 30000) + `UnityEngine.UI.Image` + `Il2CppTMPro.TextMeshProUGUI`, `Core.OnUpdate`에서 갱신. 판정·입력 훅은 게임 루프 스레드(HFTask)라 lock으로 넘김. 반복 경고는 `WarnOnce`.
@@ -97,7 +97,8 @@
   - **영문 축약형/공백 자동 교정 (`TextSanitizer`):** 영문 텍스트 내 비정상적 아포스트로피 띄어쓰기(`you'  re` → `you're`, `don ' t` → `don't`), 특수 따옴표 및 연속 공백을 정규화하여 info.txt 및 BMS 타이틀에 자동 적용.
   - **공개 문서화 최신화 (`README.md`):** 판정바/키뷰어, 오토플레이/올퍼펙트, 중국어/다국어 인코딩, 설정 가이드 전면 반영.
 - **업데이트 내성 및 이중 래퍼(Double-Wrapper) 강화 (2026-11-07, 2026-11-08 감사로 범위 정정):** 재빌드 없이 게임 업데이트를 넘기는 것까지 보장하지는 않는다. 같은 메서드의 `try`는 그 메서드가 직접 참조한 멤버의 누락을 잡지 못하므로(JIT 단계 실패, .NET 6 실측) 폴백의 직접 참조는 `[MethodImpl(NoInlining)]` 별도 메서드로 분리한다. 상세는 `docs/update_resilience_audit.md`.
-  - **상태 점검 (`ModHealth`, 2026-11-08):** 시작 시 Steam buildid를 기준과 비교해 로그, 필수 패치(서버 3종, Parse, 곡 목록·SongInfo 가드, Locate) 누락 시 커스텀 곡 주입 중단, 커스텀 곡 플레이마다 핵심 훅 호출 여부를 씬 종료 시 로그. 시작 단계 실기 확인(필수 패치 10종 + Locate 3건), 플레이 단계 미확인.
+  - **상태 점검 (`ModHealth`, 2026-11-08):** 시작 시 Steam buildid를 기준과 비교해 로그, 필수 패치(서버 3종, Parse, 곡 목록·SongInfo 가드, Locate) 누락 시 커스텀 곡 주입 중단, 커스텀 곡 플레이마다 핵심 훅 호출 여부를 씬 종료 시 로그. 2026-11-08 실기 확인: 필수 패치 10종 + Locate 3건, 커스텀 곡 플레이 후 `[Health] hwa_001 핵심 훅 호출 정상`.
+  - **결과 화면 정확도/P.A.T.C.H. (`OfflineSession.ComputeGrade`, 2026-11-08 실기 확인):** 서버가 주던 값이 없어 0% / 랭크 C로 나왔음 → `AccuracyV2Formula.GetAccuracyV2(request.Judge, request.WasPaused).Total`과 `MasteryV2Formula.CalcFromPatternInfo(patternInfo, accuracy)`로 계산해 스냅샷과 `PlayResult.NormalizedAccuracy`/`MasteryNormalized`에 넣는다. 올 퍼펙트 552노트 레벨 8: accuracy=1009999(100.9999%, 게임의 `Accuracy.MaxAccuracyScaled`), mastery=25669(256.69), 랭크 SS+, score 1656. 플레이어 전체 P.A.T.C.H.는 0 → 0 유지.
   - **오토 플레이 안전장치 (`PlayAssist.ApplyAutoPlay`, 2026-11-08):** `Extra.AutoPlay`를 런타임에 이름으로 찾고, 적용 후 `IsScorable()`이 true거나 확인 불가면 원래 값으로 복원. 인게임 미확인.
   - **백킹 필드 & 프로퍼티 동적 래퍼 (`UpdateResilience.SafeSetFieldOrProperty`):** 프로퍼티 setter 및 다양한 백킹 필드 형식(_k__BackingField, m_, _ 등)을 순차 탐색해 주입. 후보 이름 밖으로 바뀌면 `false`를 반환하고, 호출부 `SetSongField`/`SetPatternField`는 별도 메서드의 직접 필드 대입으로 넘어간다.
   - **네이티브 icall 이중 래퍼 (`CustomMedia.LoadImage`, `SetUrl`):** 1차 공식 Unity API 호출 -> Unity 래퍼 본문의 ReadOnlySpan 이슈(MissingMethodException) 시 2차 네이티브 icall fallback. 두 경로는 별도 메서드로 분리되어 한쪽 심볼이 사라져도 다른 쪽을 시도한다.
@@ -161,11 +162,11 @@
 - **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`(게임 추출물), `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외 — 공개 저장소에 게임 바이너리/디컴파일 코드를 올리지 않는다.
 
 ## 7. 다음 단계 (미구현)
-- 오토 플레이 인게임 확인, 올 퍼펙트가 점수·결과 화면에 반영되는지 확인. 키뷰어가 플레이 화면 하단 섹션 패널과 겹침 → 위치 조정 검토. 일시정지 화면 위에도 오버레이가 그려짐.
+- 오토 플레이 인게임 확인(`IsScorable` 안전장치 포함). 키뷰어가 플레이 화면 하단 섹션 패널과 겹침 → 위치 조정 검토. 일시정지 화면 위에도 오버레이가 그려짐.
 - BMS 박자 변경(#mmm02)·STOP·PitchNote 인게임 판정 확인. 박자 변경은 PPP `bars`의 비 4/4 마디 position 소수부 의미 미확인 → 변박 원곡 덤프로 확인 후 구현.
 - 커스텀 BGM: `bgms[].sound`(예 `lolikami_165bpm.fmod.ogg`)는 FMOD 사운드 이름 → `SetMainTrackToPlay(SoundData)` 후킹으로 외부 ogg 주입 필요.
 - BPM 변속이 있는 차트의 길이 계산 (현재 initialBpm 기준 근사, 경고 로그).
 - 결과 화면 `SectionDetailPanelController.Initialize` NRE 해소 (섹션 기록/캐시 쪽 추정).
-- 결과 score가 로그상 0 (`GameEndResult.FinalScore`) — 화면 표시와 일치 여부 확인.
-- 2026-11-08 업데이트 내성 수정분의 플레이 단계 확인: 커스텀 곡 선택 → 플레이 → 결과 화면, `[Health] ... 핵심 훅 호출 정상` 로그. 처리 내역은 `docs/update_resilience_audit.md`.
+- 결과 score 로그와 화면 일치 확인됨(2026-11-08, 올 퍼펙트 552노트 = 1656). 값이 작아 보여도 정상 범위로 추정(노트당 3점, `GetMaxScore`는 노트 수 곱셈).
+- 업데이트 내성 처리 내역과 업데이트 후 확인 순서: `docs/update_resilience_audit.md`.
 - 정적 분석 도구: `scratchpad/calls.py` 방식 — `dummy_dll`을 ilspycmd로 풀어 `[Address(RVA=..)]` 맵을 만들고 capstone으로 GameAssembly.dll 함수의 call 대상을 이름 붙여 출력.

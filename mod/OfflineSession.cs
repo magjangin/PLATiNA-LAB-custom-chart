@@ -65,7 +65,7 @@ internal static class InGameSurface_SendGameEnd_Patch
         if (!CustomSongs.IsCustom(patternInfo)) return true;
         try
         {
-            var localRecord = BuildLocalRecord(request);
+            var localRecord = BuildLocalRecord(request, patternInfo);
             if (localRecord != null)
             {
                 __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.Success(localRecord));
@@ -91,7 +91,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// 스냅샷은 Record* 메서드로 직접 채운다 (이전 값 0 → 이번 값).
     /// 직접 생성자 호출은 CreateRecordDirect로 분리했다. 같은 메서드에 두면 시그니처가 바뀔 때 JIT 단계에서 메서드 전체가 실패해 Reflection 폴백에 도달하지 못한다.
     /// </summary>
-    private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request)
+    private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request, PatternInfo patternInfo)
     {
         // SectionDetailPanelController NRE 방지: SectionRecords가 null이면 빈 배열 할당
         if (request != null && request.SectionRecords == null)
@@ -107,9 +107,24 @@ internal static class InGameSurface_SendGameEnd_Patch
 
         int finalScore = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
         var snapshot = new GameEndResultSnapShot();
+
+        // 서버 응답에 들어 있던 정확도/P.A.T.C.H.를 게임의 계산식으로 직접 구한다 (없으면 결과 화면이 0%, 랭크 C로 나옴)
+        int accuracy = 0, mastery = 0;
         try
         {
-            FillSnapshot(snapshot, finalScore);
+            ComputeGrade(request, patternInfo, out accuracy, out mastery);
+            bool acc = UpdateResilience.SafeSetFieldOrProperty(response.PlayResult, "NormalizedAccuracy", accuracy);
+            bool mas = UpdateResilience.SafeSetFieldOrProperty(response.PlayResult, "MasteryNormalized", mastery);
+            Core.Log.Msg($"[OfflineSession] 로컬 판정 계산: accuracy={accuracy} mastery={mastery} (PlayResult 설정 acc={acc}, mastery={mas})");
+        }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[OfflineSession] 정확도/P.A.T.C.H. 계산 실패 (0으로 진행): {e.Message}");
+        }
+
+        try
+        {
+            FillSnapshot(snapshot, finalScore, accuracy, mastery);
         }
         catch (Exception e)
         {
@@ -163,13 +178,22 @@ internal static class InGameSurface_SendGameEnd_Patch
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void FillSnapshot(GameEndResultSnapShot snapshot, int finalScore)
+    private static void FillSnapshot(GameEndResultSnapShot snapshot, int finalScore, int accuracy, int mastery)
     {
-        var zeroMastery = new Il2CppPlatinaLab.Main.Common.Types.Mastery(0);
+        var zeroAccuracy = Il2CppPlatinaLab.Main.Common.Types.Accuracy.CreateFrom(0);
+        var zeroMastery = Il2CppPlatinaLab.Main.Common.Types.Mastery.CreateFrom(0);
         snapshot.RecordPatternScore(0, finalScore);
-        snapshot.RecordPatternAccuracy(new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0), new Il2CppPlatinaLab.Main.Common.Types.Accuracy(0));
-        snapshot.RecordPatternMastery(zeroMastery, zeroMastery);
+        snapshot.RecordPatternAccuracy(zeroAccuracy, Il2CppPlatinaLab.Main.Common.Types.Accuracy.CreateFrom(accuracy));
+        snapshot.RecordPatternMastery(zeroMastery, Il2CppPlatinaLab.Main.Common.Types.Mastery.CreateFrom(mastery));
+        // 플레이어 전체 P.A.T.C.H.는 커스텀 곡으로 바뀌면 안 되므로 0 → 0 유지
         snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ComputeGrade(GameEndResult request, PatternInfo patternInfo, out int accuracy, out int mastery)
+    {
+        accuracy = Il2CppPlatinaLab.Main.Mastery.Utility.AccuracyV2Formula.GetAccuracyV2(request.Judge, request.WasPaused).Total;
+        mastery = Il2CppPlatinaLab.Main.Mastery.Utility.MasteryV2Formula.CalcFromPatternInfo(patternInfo, accuracy)._ScaledRawValue_k__BackingField;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
