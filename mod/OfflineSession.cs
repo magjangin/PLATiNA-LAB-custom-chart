@@ -87,7 +87,8 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// 서버 응답 없이 결과 화면에 넘길 레코드를 만든다.
     /// RecordUpdateHelper.UpdatePatternRecordAndBuildSnapshot은 세이브에 패턴 990001 기록을 남기므로 쓰지 않고,
     /// 스냅샷은 Record* 메서드로 직접 채운다 (이전 값 0 → 이번 값).
-    /// 게임 업데이트로 생성자 시그니처가 변경되어도 안전하게 생성하는 이중 래퍼(Reflection fallback) 지원.
+    /// 주의: 직접 생성자 호출이 이 메서드 안에 있어, 생성자 시그니처가 바뀌면 JIT 단계에서 메서드 전체가 실패하고 아래 Reflection 폴백에 도달하지 못한다.
+    /// 폴백은 생성자 실행 중 예외가 날 때만 동작한다. (docs/update_resilience_audit.md H1)
     /// </summary>
     private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request)
     {
@@ -125,13 +126,13 @@ internal static class InGameSurface_SendGameEnd_Patch
         {
             return new FreeModePlayRecordV2(request, snapshot, response, null, null, emptyFeatureList);
         }
-        catch (MissingMethodException) { /* 시그니처 변경 시 2차 폴백 진행 */ }
+        catch (MissingMethodException) { /* 생성자 내부에서 발생한 경우만 해당. 이 호출 자체의 시그니처 불일치는 JIT에서 실패해 여기로 오지 않는다 */ }
         catch (Exception e)
         {
             Core.Log.Warning($"[OfflineSession] FreeModePlayRecordV2 직접 생성 실패, 동적 생성자 폴백: {e.Message}");
         }
 
-        // 2차: Reflection을 통한 동적 생성자 탐색 (업데이트 내성 이중 래퍼)
+        // 2차: Reflection을 통한 동적 생성자 탐색
         try
         {
             var ctors = typeof(FreeModePlayRecordV2).GetConstructors();

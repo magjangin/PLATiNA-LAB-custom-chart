@@ -218,7 +218,7 @@ internal static class SoundData_FromHEAudioClip_Patch
             if (!name.Contains(baseId)) return;
             audioClip = CustomMedia.GetClip(path);
 
-            // 대리자 수명 주기 및 GC 수집에 의한 크래시 방지를 위한 이중 래퍼 적용
+            // afterDispose 실행 중 예외를 경고 로그로 격리하는 try-catch 래퍼 (GC 수명 대책은 아님)
             if (afterDispose != null)
             {
                 afterDispose = UpdateResilience.WrapAction(afterDispose);

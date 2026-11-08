@@ -334,7 +334,8 @@ internal static class CustomSongs
     }
 
     /// <summary>
-    /// 게임 업데이트로 SongInfo 백킹 필드 이름이 변경되어도 안전하게 주입하는 이중 래퍼
+    /// SongInfo 멤버를 이름으로 찾아 설정하고, 실패하면 직접 필드 대입으로 넘어간다.
+    /// 주의: 아래 직접 참조한 백킹 필드가 업데이트로 사라지면 JIT 단계에서 메서드 전체가 실패한다. (docs/update_resilience_audit.md H2)
     /// </summary>
     private static void SetSongField(SongInfo song, string propName, object value)
     {
@@ -353,7 +354,8 @@ internal static class CustomSongs
     }
 
     /// <summary>
-    /// 게임 업데이트로 PatternInfo 백킹 필드 이름이 변경되어도 안전하게 주입하는 이중 래퍼
+    /// PatternInfo 멤버를 이름으로 찾아 설정하고, 실패하면 직접 필드 대입으로 넘어간다.
+    /// 주의: 아래 직접 참조한 백킹 필드가 업데이트로 사라지면 JIT 단계에서 메서드 전체가 실패한다. (docs/update_resilience_audit.md H2)
     /// </summary>
     private static void SetPatternField(PatternInfo pattern, string propName, object value)
     {

@@ -18,6 +18,7 @@
 - **실행 로그:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\logs\`
 - **후킹 후보 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
+- **업데이트 내성 감사 & 게임 업데이트 후 확인 순서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -95,11 +96,11 @@
   - **UI 오브젝트 상한 풀링 (`PlayOverlay.UpdateJudgmentBar`):** 판정 틱 Image 오브젝트를 최대 32개로 상한 제한하여 무한 생성 방지.
   - **영문 축약형/공백 자동 교정 (`TextSanitizer`):** 영문 텍스트 내 비정상적 아포스트로피 띄어쓰기(`you'  re` → `you're`, `don ' t` → `don't`), 특수 따옴표 및 연속 공백을 정규화하여 info.txt 및 BMS 타이틀에 자동 적용.
   - **공개 문서화 최신화 (`README.md`):** 판정바/키뷰어, 오토플레이/올퍼펙트, 중국어/다국어 인코딩, 설정 가이드 전면 반영.
-- **업데이트 내성 및 이중 래퍼(Double-Wrapper) 강화 (2026-11-07):**
-  - **백킹 필드 & 프로퍼티 동적 래퍼 (`UpdateResilience.SafeSetFieldOrProperty`):** 게임 업데이트 시 컴파일러 백킹 필드 이름 변경에 대응하여 프로퍼티 setter 및 다양한 백킹 필드 형식(_k__BackingField, m_, _ 등)을 순차 탐색하여 안전 주입.
-  - **네이티브 icall 이중 래퍼 (`CustomMedia.LoadImage`, `SetUrl`):** 1차 공식 Unity API 호출 시도 -> ReadOnlySpan 이슈/MissingMethodException 발생 시 2차 네이티브 icall fallback으로 버전 변경 및 인터롭 수정에 양방향 대응.
-  - **오디오 대리자(Action) 안전 래퍼 (`UpdateResilience.WrapAction`):** `SoundData.FromHEAudioClip`의 `afterDispose` 콜백 대리자에 try-catch 이중 래퍼를 씌워 GC 수집 크래시 및 네이티브 예외 격리.
-  - **동적 결과 레코드 생성기 (`OfflineSession.BuildLocalRecord`):** 게임 업데이트로 `FreeModePlayRecordV2` 생성자 파라미터가 변경되어도 Reflection을 통해 최적 생성자를 자동 탐색하여 인스턴스화.
+- **업데이트 내성 및 이중 래퍼(Double-Wrapper) 강화 (2026-11-07, 2026-11-08 감사로 범위 정정):** 재빌드 없이 게임 업데이트를 넘기는 것까지 보장하지는 않는다. 같은 메서드의 `try`는 그 메서드가 직접 참조한 멤버의 누락을 잡지 못한다(JIT 단계 실패, .NET 6 실측). 상세는 `docs/update_resilience_audit.md`.
+  - **백킹 필드 & 프로퍼티 동적 래퍼 (`UpdateResilience.SafeSetFieldOrProperty`):** 프로퍼티 setter 및 다양한 백킹 필드 형식(_k__BackingField, m_, _ 등)을 순차 탐색해 주입. 후보 이름 밖으로 바뀌면 `false`만 반환. 호출부 `SetSongField`/`SetPatternField`는 직접 필드 참조가 함께 있어 그 필드가 사라지면 메서드 전체가 실패.
+  - **네이티브 icall 이중 래퍼 (`CustomMedia.LoadImage`, `SetUrl`):** 1차 공식 Unity API 호출 -> Unity 래퍼 본문의 ReadOnlySpan 이슈(MissingMethodException) 시 2차 네이티브 icall fallback. 2차에서 쓰는 icall/마샬링 심볼 자체가 사라지면 메서드 전체가 실패.
+  - **오디오 콜백(Action) 예외 래퍼 (`UpdateResilience.WrapAction`):** `SoundData.FromHEAudioClip`의 `afterDispose` 콜백을 람다로 감싸 try-catch로 실행하고, 인터롭을 통해 관리 코드로 올라온 예외를 경고 로그로 격리. 네이티브 크래시(AV 등)는 막지 못하며, GC 수명 문제의 대책으로 검증된 적 없음(해당 크래시 재현 기록 없음).
+  - **결과 레코드 생성 폴백 (`OfflineSession.BuildLocalRecord`):** 직접 생성이 런타임 예외로 실패하면 Reflection으로 생성자를 순회해 인스턴스화. 단 생성자 시그니처가 바뀌면 직접 호출 때문에 JIT 단계에서 메서드 전체가 실패해 폴백에 도달하지 못하고 `NetworkError`를 반환.
   - **Addressables 탐색 및 오버레이 방어 강화 (`AddressableKeyRedirect`, `PlayOverlay`):** Locate 메서드 탐색 유연성 및 메모리 unbox 전 포인터 유효성 검사 강화.
 
 ---
@@ -135,7 +136,7 @@
 - **다른 곡의 lock 속성 차용:** `BuildNameBanners` 시점엔 보유/잠금 판정 사전이 비어 모든 곡에서 KeyNotFound → `"none"` 하드코딩.
 - **인터롭 어셈블리에서 `GetInterfaces()`로 IResourceLocator 구현체 탐색:** Il2CppInterop은 IL2CPP 인터페이스를 C# 인터페이스로 남기지 않음 → 메서드 이름 `Locate`(인자 3개)로 탐색. `Unity.Addressables`는 지연 로드라 `Assembly.Load` 선행 필요.
 - **음원 교체 지점 실패들:** `PreviewSoundController.Method_Private_UniTask_1_SoundData_String_CancellationToken_PDM_0` Prefix·`PatternPlayer.SetMainTrackToPlay` Prefix → 둘 다 발동 안 함. `SoundData` 생성자 Prefix → `Failed to init IL2CPP patch backend for SoundData::.ctor` 경고(관리 코드 쪽만 패치됨) → 정적 `FromHEAudioClip(HEAudioClip,bool,Action)`로 이동해 성공. `HEAudioClip.name` 세터는 문자열 Span 경로라 쓰지 않음.
-- **LINQ 람다 일부에서 CS0656(NullableAttribute) 빌드 오류:** `All.SelectMany(...).FirstOrDefault(...)` 등 → foreach로 교체.
+- **LINQ 람다 일부에서 CS0656(NullableAttribute) 빌드 오류:** `All.SelectMany(...).FirstOrDefault(...)` 등 → 해당 호출만 foreach로 교체. 람다 전반을 금지하는 규칙은 아님(`<Nullable>disable</Nullable>`인 현재 코드에서 `CustomSongs.All.FirstOrDefault(c => ...)` 등 LINQ 람다를 사용 중).
 - **IMGUI(OnGUI)로 오버레이 그리기:** 이 게임 빌드는 IMGUI가 스트리핑돼 `GUI.*` 호출마다 `Method unstripping failed`(매 프레임 경고로 로그 3700줄+) → uGUI Canvas로 교체. `GUIStyle(GUIStyle)` 복사 생성자도 없음.
 - **`Constants.JudgmentTimingMap` 값을 `ValueTuple.Item1/Item2`로 읽기:** 1.15E-311 같은 쓰레기값 → 박스를 `il2cpp_object_unbox`해서 double 두 개를 직접 읽음.
 - **`InGameSettingHelper.IsAutoPlayMode` / `InputStateMachine.Interpret` 패치:** 둘 다 호출부에 인라인돼 직접 호출 없음 → 설정값 자체를 바꾸거나(`SetExtra`) 직접 호출되는 `ProcessInputEvent`를 후킹.
@@ -164,4 +165,5 @@
 - BPM 변속이 있는 차트의 길이 계산 (현재 initialBpm 기준 근사, 경고 로그).
 - 결과 화면 `SectionDetailPanelController.Initialize` NRE 해소 (섹션 기록/캐시 쪽 추정).
 - 결과 score가 로그상 0 (`GameEndResult.FinalScore`) — 화면 표시와 일치 여부 확인.
+- 업데이트 내성 감사의 미해결 항목(H1~H3, M1~M5): `docs/update_resilience_audit.md`.
 - 정적 분석 도구: `scratchpad/calls.py` 방식 — `dummy_dll`을 ilspycmd로 풀어 `[Address(RVA=..)]` 맵을 만들고 capstone으로 GameAssembly.dll 함수의 call 대상을 이름 붙여 출력.

@@ -138,8 +138,9 @@ internal static class UpdateResilience
     }
 
     /// <summary>
-    /// Il2Cpp Action 대리자에 대한 안전한 이중 래퍼를 생성한다.
-    /// 원본 Action 실행 전후의 수명 주기 및 예외를 격리하고 GC 수집에 의한 크래시를 방지한다.
+    /// Il2Cpp Action을 호출하는 람다를 만들어 before/원본/after 실행을 각각 try-catch로 감싼다.
+    /// 인터롭을 통해 관리 코드로 올라온 예외(Il2CppException 등)만 경고로 남기며, 네이티브 크래시(AV 등)는 막지 못한다.
+    /// 클로저가 original 프록시를 참조하긴 하지만, 이 래퍼를 GC 수명 문제의 대책으로 검증한 적은 없다.
     /// </summary>
     public static Il2CppSystem.Action WrapAction(Il2CppSystem.Action original, Action before = null, Action after = null)
     {

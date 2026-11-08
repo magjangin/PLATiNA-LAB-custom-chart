@@ -32,7 +32,9 @@ internal static class AddressableKeyRedirect
             foreach (var t in types)
             {
                 // Il2CppInterop은 IL2CPP 인터페이스를 C# 인터페이스로 남기지 않으므로 메서드 이름/시그니처로 찾는다
-                // 컴파일러 생성 람다/익명 클래스(<>)는 제외하되, 실제 IResourceLocator 구현체들을 탐색
+                // 주의: 아래 "<>" 검사는 사실상 동작하지 않는다. 컴파일러 생성 람다 타입(<>c, 클로저 <>c__DisplayClass…)은
+                // 인터롭에서 __c, __c__DisplayClass…로 이름이 바뀌어 일치하는 타입이 0개다(실측).
+                // __c 계열(38개)에는 Locate가 없어 결과에 영향은 없고, 실제 선별은 아래 Locate 이름/인자 수 조건이 담당한다.
                 if (t.IsInterface || t.IsAbstract || t.Name == "IResourceLocator") continue;
                 if (t.Name.StartsWith("<>")) continue;
 
