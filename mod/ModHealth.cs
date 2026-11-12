@@ -15,6 +15,8 @@ internal static class ModHealth
 {
     private const string TestedBuildId = "25981392";
     private const string AppManifest = "appmanifest_3430470.acf";
+    /// <summary>검증 빌드에서 패치된 IResourceLocator.Locate 구현체 수 (DynamicResourceLocator, ResourceLocationMap, ContentCatalogData+ResourceLocator).</summary>
+    private const int TestedLocateCount = 3;
 
     /// <summary>하나라도 없으면 커스텀 곡을 안전하게 플레이할 수 없는 패치 (선언 타입.메서드 이름).</summary>
     private static readonly string[] s_requiredPatches =
@@ -81,6 +83,10 @@ internal static class ModHealth
             foreach (var name in s_requiredPatches)
                 if (!patched.Contains(name)) missing.Add(name);
             if (locate == 0) missing.Add("IResourceLocator.Locate");
+
+            // 일부 구현체만 빠진 경우: 그 경로로 찾는 리소스만 기반 곡으로 치환되지 않는다 → 주입은 유지하고 경고
+            if (locate > 0 && locate < TestedLocateCount)
+                Core.Log.Warning($"[Health] Locate 패치 {locate}건 (검증 빌드 {TestedLocateCount}건). 커스텀 곡 로딩이 멈추면 [KeyRedirect] 로그를 확인하세요.");
 
             if (missing.Count == 0)
             {

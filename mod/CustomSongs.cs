@@ -100,10 +100,10 @@ internal sealed class CustomSong
                 }
             }
         }
-        // BPM이 info에 없으면 같은 폴더 BMS의 #BPM
+        // BPM이 info에 없으면 같은 폴더 BMS(.bms/.bme/.bml/.pms, 첫 난이도용 파일)의 #BPM
         if (song.Bpm == null)
         {
-            var bms = Directory.GetFiles(folder, "*.bms").FirstOrDefault();
+            var bms = BmsConverter.FindFor(folder, difficulties.Count > 0 ? difficulties[0] : "easy");
             var bpmLine = bms == null ? null : EncodingHelper.ReadAllLinesSafe(bms).FirstOrDefault(l => l.StartsWith("#BPM ", StringComparison.OrdinalIgnoreCase));
             if (bpmLine != null) song.Bpm = bpmLine[5..].Trim();
         }
@@ -190,6 +190,20 @@ internal static class CustomSongs
 
     public static bool IsCustomId(string songId) => songId != null && songId.StartsWith(IdPrefix);
     public static CustomSong ById(string songId) => All.FirstOrDefault(s => s.Id == songId);
+
+    /// <summary>
+    /// 문자열(리소스 키 등)에 든 커스텀 곡 ID. 가장 긴 ID를 고른다 — 곡이 1000개를 넘으면
+    /// "hwa_1000"이 "hwa_100"도 포함하므로 처음 맞는 것을 쓰면 다른 곡으로 치환된다.
+    /// </summary>
+    public static CustomSong FindIdIn(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        CustomSong best = null;
+        foreach (var s in All)
+            if (s.Id != null && (best == null || s.Id.Length > best.Id.Length) && text.Contains(s.Id, StringComparison.Ordinal))
+                best = s;
+        return best;
+    }
     public static CustomChart ByPatternIndex(int index)
     {
         foreach (var s in All) foreach (var c in s.Charts) if (c.PatternIndex == index) return c;
@@ -648,7 +662,8 @@ internal static class CategoryCacheFactory_CreateAll_Patch
     {
         try
         {
-            if (__result == null) return;
+            // 필수 패치가 빠져 주입을 껐으면 빈 카테고리도 만들지 않는다
+            if (__result == null || !ModHealth.CustomSongsAllowed) return;
             CustomSongs.Inject();
             foreach (var c in __result)
                 if (c != null && c.Key == CustomSongs.CategoryTag) return;

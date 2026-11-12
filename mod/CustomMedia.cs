@@ -13,10 +13,11 @@ namespace PLATiNALAB.Mod;
 /// <summary>
 /// hwa\ 곡 폴더의 파일을 게임 리소스 대신 쓰게 한다.
 /// - 썸네일.png → CoverManager.GetCoverSprite
-/// - music.ogg  → 미리듣기(PreviewSoundController) + 인게임 BGM(PatternPlayer.SetMainTrackToPlay)
+/// - music.ogg  → 미리듣기 + 인게임 BGM (둘 다 SoundData.FromHEAudioClip에서 교체)
 /// - video.mp4  → BGAPlayer.SetClip 직후 VideoPlayer를 URL 모드로 전환
 /// 게임 음원(.fmod.ogg)은 HEAudioClip(ScriptableObject)에 ogg/wav 바이트를 담은 것이고
-/// new SoundData(clip, isLooping)으로 재생 객체를 만든다(HighendGames.HEAudio 인터롭 실측).
+/// SoundData.FromHEAudioClip(clip, isLooping, afterDispose)로 재생 객체를 만든다(HighendGames.HEAudio 인터롭 실측).
+/// SoundData 생성자와 PatternPlayer.SetMainTrackToPlay 패치는 발동하지 않았다(AGENTS.md Dead Ends).
 /// </summary>
 internal static class CustomMedia
 {
@@ -147,6 +148,9 @@ internal static class CustomMedia
             s_coverLru.AddLast(path);
             return cached;
         }
+        // 캐시에 있던 스프라이트가 수집됐으면 항목을 지운다. 남겨 두면 LRU에 같은 경로가 두 번 들어가
+        // 오래된 쪽을 내보낼 때 방금 새로 만든 스프라이트까지 파괴된다.
+        if (s_covers.Remove(path)) s_coverLru.Remove(path);
         if (!s_failedCovers.Add(path)) return null; // 실패한 파일은 매 프레임 재시도하지 않는다
 
         // 캐시 한도 초과 시 가장 오래된 텍스처/스프라이트 메모리 명시적 해제 (GPU VRAM 누수 차단)
@@ -166,9 +170,10 @@ internal static class CustomMedia
             }
         }
 
+        var bytes = File.ReadAllBytes(path); // 읽기 실패 시 텍스처를 만들기 전에 예외로 빠진다 (s_failedCovers에 남아 재시도 안 함)
         var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
         tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
-        if (!LoadImage(tex, File.ReadAllBytes(path)))
+        if (!LoadImage(tex, bytes))
         {
             Core.Log.Warning($"[CustomMedia] 이미지 로드 실패: {path}");
             UnityEngine.Object.Destroy(tex);
@@ -213,8 +218,8 @@ internal static class PreviewSoundController_Play_Patch
 }
 
 /// <summary>
-/// 미리듣기/인게임 BGM 교체. PreviewSoundController의 로더와 PatternPlayer.SetMainTrackToPlay는 실측상 패치가 발동하지 않아
-/// (인라인/다른 경로) 모든 음원이 거치는 SoundData 생성자에서 바꾼다.
+/// 미리듣기/인게임 BGM 교체. PreviewSoundController의 로더와 PatternPlayer.SetMainTrackToPlay는 실측상 패치가 발동하지 않고
+/// SoundData 생성자는 IL2CPP 패치 백엔드 초기화에 실패해서, 모든 음원이 거치는 정적 SoundData.FromHEAudioClip에서 바꾼다.
 /// 커스텀 곡 리소스 키는 AddressableKeyRedirect로 기반 곡 것을 로드하므로, 클립 이름에 기반 곡 ID가 들어 있으면
 /// (미리듣기 "wits_biz", BGM "wits_biz_156bpm" 등) 해당 곡의 music.ogg 클립으로 바꾼다.
 /// </summary>

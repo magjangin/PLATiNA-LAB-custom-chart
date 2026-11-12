@@ -38,8 +38,8 @@ internal static class PlayOverlay
     private const float Duration = 1.5f;
 
     private static readonly JudgmentType[] Judgments = { JudgmentType.PerfectHigh, JudgmentType.Perfect, JudgmentType.Great, JudgmentType.Good };
-    // 범위 (ms, 앞/뒤 중 큰 값). JudgmentTimingMap을 못 읽었을 때의 폴백
-    private static readonly float[] RangeMs = { 25f, 50f, 85f, 120f };
+    // 범위 (ms, 앞/뒤 중 큰 값). JudgmentTimingMap을 못 읽었을 때의 폴백 (실측 PerfectHigh ±25 / Perfect ±50 / Great ±80 / Good ±120)
+    private static readonly float[] RangeMs = { 25f, 50f, 80f, 120f };
     private static bool s_rangeLoaded;
 
     // ---------------- 키뷰어 상태 ----------------

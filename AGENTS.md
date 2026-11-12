@@ -105,6 +105,12 @@
   - **오디오 콜백(Action) 예외 래퍼 (`UpdateResilience.WrapAction`):** `SoundData.FromHEAudioClip`의 `afterDispose` 콜백을 람다로 감싸 try-catch로 실행하고, 인터롭을 통해 관리 코드로 올라온 예외를 경고 로그로 격리. 네이티브 크래시(AV 등)는 막지 못하며, GC 수명 문제의 대책으로 검증된 적 없음(해당 크래시 재현 기록 없음).
   - **결과 레코드 생성 폴백 (`OfflineSession.BuildLocalRecord`):** `CreateRecordDirect`(별도 메서드)가 실패하면 Reflection으로 `(IntPtr)`·복사 생성자를 뺀 생성자를 후보별로 시도. 모두 실패하면 `NetworkError` 반환.
   - **Addressables 탐색 및 오버레이 방어 강화 (`AddressableKeyRedirect`, `PlayOverlay`):** Locate 메서드 탐색 유연성 및 메모리 unbox 전 포인터 유효성 검사 강화.
+- **람다(컴파일러 생성) 탐색 강화 및 2차 코드 리뷰 (2026-11-12, 상세 `docs/update_resilience_audit.md` "2차 리뷰"):**
+  - **`InteropNames`:** 런타임 이름 탐색에서 람다 캐시(`__c`)·클로저(`__c__DisplayClass`)·상태 머신(`_X_d__N`, async 람다 `__X_b__N_d`, 합성 이름 `ValueTypeCompilerGenerated…`)·FixedBuffer 등을 거른다. 1차 기준은 인터롭이 붙이는 `[ObfuscatedName("원래 이름")]`의 `<`, 2차는 이름 패턴. 오프라인 하네스로 인터롭 155개 어셈블리 2553개 타입에서 패턴 단독 누락·오탐 0 확인.
+  - **인터롭 인터페이스 프록시:** `IResourceLocator` 같은 IL2CPP 인터페이스는 `Il2CppObjectBase`를 직접 상속하는 **일반 클래스**로 나오고 `IsInterface/IsAbstract`가 false다 → `Il2CppSystem.Object` 비상속 또는 `NativeMethodInfoPtr_{메서드}_…_Abstract_…` 필드로 판별(`IsIl2CppInterfaceOrAbstract`). 예전엔 이름 문자열 `"IResourceLocator"`로만 걸렀다.
+  - **Locate 탐색:** 엄격 시그니처(`bool Locate(Il2CppSystem.Object, Type, out IList)`) → 0건이면 완화 조건. Prefix는 `__0`(타입은 탐색 단계에서 확인). `ModHealth`가 3건 미만이면 경고. 2026-11-12 실행 확인: 3건 패치, `[Health] 필수 패치 정상`, 선곡 화면에서 커버·미리듣기 키 치환(`hwa_001` → `wits_biz`) 발생. 플레이(차트/BGM/BGA)는 이번 빌드로 미확인.
+  - **인코딩 감지:** 예전 코드는 UTF-8이 아니면 무조건 GBK였다(문서와 불일치) → Shift-JIS/CP949/GBK/Big5 바이트 패턴 점수 비교로 교체.
+  - **차트 캐시:** 음원·영상 수정 시간까지 비교(바꾸면 endPosition 재계산). 커버 LRU 중복 등록으로 새 스프라이트가 파괴되던 문제 수정.
 
 ---
 
@@ -137,6 +143,8 @@
 - **`PlayDirector.LoadGame` Prefix로 SongInfo 교체:** IL2CPP가 `LoadGame` 스텁을 `LoadTargetPattern` MoveNext에 인라인(MoveNext 0x2D8A580 직접 호출) → 훅 미발동. Addressables `Locate` 키 치환으로 대체.
 - **`PlayTarget`/`PlaySingleEnterContext` 수정:** 둘 다 값 타입(struct)이라 Prefix 수정이 원본에 반영 안 될 가능성 → 시도하지 않음.
 - **다른 곡의 lock 속성 차용:** `BuildNameBanners` 시점엔 보유/잠금 판정 사전이 비어 모든 곡에서 KeyNotFound → `"none"` 하드코딩.
+- **Locate 후보에서 `IResourceLocator`를 `IsInterface`/`IsAbstract`로 거르기:** 인터롭 인터페이스 프록시는 일반 클래스라 둘 다 false → 후보에 섞였다(2026-11-12 오프라인 테스트). 상속 체인(`Il2CppSystem.Object` 없음)과 `_Abstract_` 메서드 정보 필드로 판별.
+- **컴파일러 생성 타입을 `<>` 이름이나 `__c`/`DisplayClass` 패턴만으로 거르기:** 인터롭에서 `<`는 사라지고, async 람다(`__X_b__N_d`)·합성 이름(`ValueTypeCompilerGenerated…`)·FixedBuffer 등 115개가 패턴에서 빠졌다 → `ObfuscatedName` 원래 이름 우선 + 패턴 보강(`InteropNames`).
 - **인터롭 어셈블리에서 `GetInterfaces()`로 IResourceLocator 구현체 탐색:** Il2CppInterop은 IL2CPP 인터페이스를 C# 인터페이스로 남기지 않음 → 메서드 이름 `Locate`(인자 3개)로 탐색. `Unity.Addressables`는 지연 로드라 `Assembly.Load` 선행 필요.
 - **음원 교체 지점 실패들:** `PreviewSoundController.Method_Private_UniTask_1_SoundData_String_CancellationToken_PDM_0` Prefix·`PatternPlayer.SetMainTrackToPlay` Prefix → 둘 다 발동 안 함. `SoundData` 생성자 Prefix → `Failed to init IL2CPP patch backend for SoundData::.ctor` 경고(관리 코드 쪽만 패치됨) → 정적 `FromHEAudioClip(HEAudioClip,bool,Action)`로 이동해 성공. `HEAudioClip.name` 세터는 문자열 Span 경로라 쓰지 않음.
 - **LINQ 람다 일부에서 CS0656(NullableAttribute) 빌드 오류:** `All.SelectMany(...).FirstOrDefault(...)` 등 → 해당 호출만 foreach로 교체. 람다 전반을 금지하는 규칙은 아님(`<Nullable>disable</Nullable>`인 현재 코드에서 `CustomSongs.All.FirstOrDefault(c => ...)` 등 LINQ 람다를 사용 중).

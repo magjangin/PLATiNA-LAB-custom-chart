@@ -19,17 +19,10 @@ internal static class UpdateResilience
     /// </summary>
     public static bool SafeSetFieldOrProperty(object target, string memberName, object value)
     {
-        if (target == null) return false;
+        if (target == null || string.IsNullOrEmpty(memberName)) return false;
         var type = target.GetType();
 
-        // 1. 프로퍼티 시도
-        var propKey = (type, memberName);
-        if (!s_propertyCache.TryGetValue(propKey, out var prop))
-        {
-            prop = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            s_propertyCache[propKey] = prop;
-        }
-
+        var prop = FindProperty(type, memberName);
         if (prop != null && prop.CanWrite)
         {
             try
@@ -40,29 +33,7 @@ internal static class UpdateResilience
             catch { }
         }
 
-        // 2. 필드 시도 (다양한 백킹 필드 네이밍 규칙 순차 탐색)
-        var fieldKey = (type, memberName);
-        if (!s_fieldCache.TryGetValue(fieldKey, out var field))
-        {
-            var candidates = new[]
-            {
-                $"_{memberName}_k__BackingField",
-                $"<{memberName}>k__BackingField",
-                $"_{char.ToLowerInvariant(memberName[0])}{memberName[1..]}",
-                $"_{memberName}",
-                $"m_{memberName}",
-                memberName
-            };
-
-            foreach (var name in candidates)
-            {
-                field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (field != null) break;
-            }
-
-            s_fieldCache[fieldKey] = field;
-        }
-
+        var field = FindField(type, memberName);
         if (field != null)
         {
             try
@@ -81,62 +52,60 @@ internal static class UpdateResilience
     /// </summary>
     public static T SafeGetFieldOrProperty<T>(object target, string memberName, T defaultValue = default)
     {
-        if (target == null) return defaultValue;
+        if (target == null || string.IsNullOrEmpty(memberName)) return defaultValue;
         var type = target.GetType();
 
-        // 1. 프로퍼티 시도
-        var propKey = (type, memberName);
-        if (!s_propertyCache.TryGetValue(propKey, out var prop))
-        {
-            prop = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            s_propertyCache[propKey] = prop;
-        }
-
+        var prop = FindProperty(type, memberName);
         if (prop != null && prop.CanRead)
         {
             try
             {
-                var val = prop.GetValue(target);
-                if (val is T tVal) return tVal;
+                if (prop.GetValue(target) is T tVal) return tVal;
             }
             catch { }
         }
 
-        // 2. 필드 시도
-        var fieldKey = (type, memberName);
-        if (!s_fieldCache.TryGetValue(fieldKey, out var field))
-        {
-            var candidates = new[]
-            {
-                $"_{memberName}_k__BackingField",
-                $"<{memberName}>k__BackingField",
-                $"_{char.ToLowerInvariant(memberName[0])}{memberName[1..]}",
-                $"_{memberName}",
-                $"m_{memberName}",
-                memberName
-            };
-
-            foreach (var name in candidates)
-            {
-                field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (field != null) break;
-            }
-
-            s_fieldCache[fieldKey] = field;
-        }
-
+        var field = FindField(type, memberName);
         if (field != null)
         {
             try
             {
-                var val = field.GetValue(target);
-                if (val is T tVal) return tVal;
+                if (field.GetValue(target) is T tVal) return tVal;
             }
             catch { }
         }
 
         return defaultValue;
     }
+
+    private static PropertyInfo FindProperty(Type type, string memberName) =>
+        s_propertyCache.GetOrAdd((type, memberName), key =>
+        {
+            try { return key.Item1.GetProperty(key.Item2, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
+            catch (AmbiguousMatchException) { return null; } // 인덱서 등 같은 이름이 여럿이면 필드로 넘어간다
+        });
+
+    /// <summary>인터롭 백킹 필드(_X_k__BackingField), 원래 백킹 필드(&lt;X&gt;k__BackingField), 흔한 명명 규칙 순으로 찾는다.</summary>
+    private static FieldInfo FindField(Type type, string memberName) =>
+        s_fieldCache.GetOrAdd((type, memberName), key =>
+        {
+            var name = key.Item2;
+            var candidates = new[]
+            {
+                $"_{name}_k__BackingField",
+                $"<{name}>k__BackingField",
+                $"_{char.ToLowerInvariant(name[0])}{name[1..]}",
+                $"_{name}",
+                $"m_{name}",
+                name,
+            };
+            foreach (var candidate in candidates)
+            {
+                var field = key.Item1.GetField(candidate, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (field != null) return field;
+            }
+            return null;
+        });
 
     /// <summary>
     /// Il2Cpp Action을 호출하는 람다를 만들어 before/원본/after 실행을 각각 try-catch로 감싼다.

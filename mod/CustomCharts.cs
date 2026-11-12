@@ -14,7 +14,7 @@ namespace PLATiNALAB.Mod;
 /// - 기존 곡: UserData/PLATiNALAB/CustomCharts/{key}.json 이 있으면 그 내용으로 교체
 /// - 원본 차트 덤프(UserData/PLATiNALAB/ChartDump)는 형식 조사용이라 기본 꺼짐.
 ///   UserData/MelonPreferences.cfg의 [PLATiNALAB] DumpCharts = true 로 켠다.
-/// 파일 수정 시간(LastWriteTimeUtc)을 확인하여 변경 시에만 재변환/재로드하므로 (핫리로드 지원 및 불필요한 I/O 병목 제거)
+/// 차트·음원·영상 파일의 수정 시간을 확인하여 변경 시에만 재변환/재로드하므로 (핫리로드 지원 및 불필요한 I/O 병목 제거)
 /// 게임 재시작 없이 수정 → 재플레이로 확인 가능.
 /// </summary>
 internal static class CustomCharts
@@ -29,19 +29,50 @@ internal static class CustomCharts
     // Parse(PatternPlayer, Stream)이 내부에서 Parse(Stream)을 부를 경우 중복 처리 방지
     [ThreadStatic] internal static bool Handling;
 
+    /// <summary>
+    /// 변환 결과 캐시. Stamp는 차트 파일과, 결과에 영향을 주는 음원·영상(endPosition 연장)의 수정 시간을 합친 값이다.
+    /// 차트만 비교하면 music.ogg/video.mp4를 바꿨을 때 이전 길이로 만든 차트가 계속 쓰였다.
+    /// Parse가 로딩 스레드에서 불릴 수 있어 lock으로 보호한다.
+    /// </summary>
     private sealed class CachedChart
     {
-        public DateTime LastWriteTimeUtc;
+        public string Stamp;
         public byte[] Data;
     }
     private const int MaxChartCache = 32;
+    private static readonly object s_cacheLock = new();
     private static readonly Dictionary<string, CachedChart> s_bmsCache = new();
     private static readonly Dictionary<string, CachedChart> s_jsonCache = new();
 
-    private static void StoreCache(Dictionary<string, CachedChart> cache, string key, CachedChart item)
+    private static bool TryGetCache(Dictionary<string, CachedChart> cache, string key, string stamp, out byte[] data)
     {
-        if (cache.Count >= MaxChartCache) cache.Clear();
-        cache[key] = item;
+        lock (s_cacheLock)
+        {
+            if (cache.TryGetValue(key, out var cached) && cached.Stamp == stamp) { data = cached.Data; return true; }
+        }
+        data = null;
+        return false;
+    }
+
+    private static void StoreCache(Dictionary<string, CachedChart> cache, string key, string stamp, byte[] data)
+    {
+        lock (s_cacheLock)
+        {
+            if (cache.Count >= MaxChartCache && !cache.ContainsKey(key)) cache.Clear();
+            cache[key] = new CachedChart { Stamp = stamp, Data = data };
+        }
+    }
+
+    private static string StampOf(params string[] paths)
+    {
+        var sb = new StringBuilder();
+        foreach (var p in paths)
+        {
+            long ticks = 0;
+            try { if (p != null && File.Exists(p)) ticks = File.GetLastWriteTimeUtc(p).Ticks; } catch { }
+            sb.Append(ticks).Append('|');
+        }
+        return sb.ToString();
     }
 
     public static void Init()
@@ -137,17 +168,14 @@ internal static class CustomCharts
             {
                 try
                 {
-                    var bmsWrite = File.GetLastWriteTimeUtc(bms);
-                    if (s_bmsCache.TryGetValue(bms, out var cached) && cached.LastWriteTimeUtc == bmsWrite)
-                    {
-                        return ToStream(cached.Data);
-                    }
+                    var stamp = StampOf(bms, song.Song.MusicPath, song.Song.VideoPath);
+                    if (TryGetCache(s_bmsCache, bms, stamp, out var cachedData)) return ToStream(cachedData);
 
                     var music = song.Song.MusicPath != null ? Path.GetFileName(song.Song.MusicPath) : "music.ogg";
                     var converted = BmsConverter.Convert(BmsConverter.Parse(bms), music, song.Song.Lanes,
                         System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
                     var chart = CustomSongs.PrepareChart(Encoding.UTF8.GetBytes(converted.ToJsonString()), bytes, song.Song);
-                    StoreCache(s_bmsCache, bms, new CachedChart { LastWriteTimeUtc = bmsWrite, Data = chart });
+                    StoreCache(s_bmsCache, bms, stamp, chart);
                     Core.Log.Msg($"[CustomCharts] 커스텀 곡 BMS 적용: {song.Key} '{song.Song.Title}' ← {Path.GetFileName(bms)} ({chart.Length} bytes)");
                     return ToStream(chart);
                 }
@@ -170,14 +198,11 @@ internal static class CustomCharts
 
             try
             {
-                var chartWrite = File.GetLastWriteTimeUtc(song.ChartPath);
-                if (s_jsonCache.TryGetValue(song.ChartPath, out var cached) && cached.LastWriteTimeUtc == chartWrite)
-                {
-                    return ToStream(cached.Data);
-                }
+                var stamp = StampOf(song.ChartPath, song.Song.MusicPath, song.Song.VideoPath);
+                if (TryGetCache(s_jsonCache, song.ChartPath, stamp, out var cachedData)) return ToStream(cachedData);
 
                 var chart = CustomSongs.PrepareChart(File.ReadAllBytes(song.ChartPath), bytes, song.Song);
-                StoreCache(s_jsonCache, song.ChartPath, new CachedChart { LastWriteTimeUtc = chartWrite, Data = chart });
+                StoreCache(s_jsonCache, song.ChartPath, stamp, chart);
                 Core.Log.Msg($"[CustomCharts] 커스텀 곡 차트 적용: {song.Key} '{song.Song.Title}' ({chart.Length} bytes)");
                 return ToStream(chart);
             }
@@ -201,14 +226,11 @@ internal static class CustomCharts
         {
             try
             {
-                var customWrite = File.GetLastWriteTimeUtc(customPath);
-                if (s_jsonCache.TryGetValue(customPath, out var cached) && cached.LastWriteTimeUtc == customPathWrite(customWrite))
-                {
-                    return ToStream(cached.Data);
-                }
+                var stamp = StampOf(customPath);
+                if (TryGetCache(s_jsonCache, customPath, stamp, out var cachedData)) return ToStream(cachedData);
 
                 var custom = File.ReadAllBytes(customPath);
-                StoreCache(s_jsonCache, customPath, new CachedChart { LastWriteTimeUtc = customWrite, Data = custom });
+                StoreCache(s_jsonCache, customPath, stamp, custom);
                 Core.Log.Msg($"[CustomCharts] 커스텀 차트 적용: {name} ({custom.Length} bytes)");
                 return ToStream(custom);
             }
@@ -216,8 +238,6 @@ internal static class CustomCharts
         }
         return ToStream(bytes);
     }
-
-    private static DateTime customPathWrite(DateTime dt) => dt;
 }
 
 [HarmonyPatch(typeof(PatternParser), nameof(PatternParser.Parse), typeof(PatternPlayer), typeof(Il2CppSystem.IO.Stream))]
