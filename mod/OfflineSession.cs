@@ -24,66 +24,126 @@ internal static class OfflineSession
 [HarmonyPatch(typeof(InGameSurface), nameof(InGameSurface.RequestGameStart))]
 internal static class InGameSurface_RequestGameStart_Patch
 {
+    private const string Hook = "InGameSurface.RequestGameStart";
+
+    /// <summary>
+    /// 모든 곡의 게임 시작에서 불린다. 로컬 세션을 만드는 게임 타입 참조는 StartLocal로 격리해서,
+    /// 업데이트로 그 타입이 바뀌어도 일반 곡 시작은 원본대로 진행된다 (HookGuard 설명 참고).
+    /// </summary>
     private static bool Prefix(int patternId, ref UniTask<SurfaceResult<GameSessionResult>> __result)
     {
+        var chart = CustomSongs.ByPatternIndex(patternId);
+        CustomSongs.Current = chart;
+        if (chart == null) return true;
+        if (!ModHealth.CustomSongsAllowed || HookGuard.IsDisabled(Hook))
+        {
+            // 서버 우회가 안 되는 상태: 원본으로 넘긴다 (서버가 없는 패턴 번호를 거부하고 오류 팝업, 기록은 남지 않음)
+            CustomSongs.Current = null;
+            Core.Log.Error($"[OfflineSession] 커스텀 곡 로컬 세션을 만들 수 없는 상태라 원본 경로로 넘깁니다 (pattern {patternId})");
+            return true;
+        }
         try
         {
-            CustomSongs.Current = CustomSongs.ByPatternIndex(patternId);
-            if (CustomSongs.Current == null) return true;
-            var session = new GameSessionResult();
-            if (!UpdateResilience.SafeSetFieldOrProperty(session, "Token", OfflineSession.Token))
-                Core.Log.Warning("[OfflineSession] 세션 Token 설정 실패: RenewGameSession이 서버로 갈 수 있음");
-            ModHealth.BeginPlay(CustomSongs.Current.Song);
-            __result = new UniTask<SurfaceResult<GameSessionResult>>(SurfaceResult<GameSessionResult>.Success(session));
+            chart.Song.RefreshMedia(); // 곡 폴더 파일을 바꿨으면 이번 플레이부터 반영
+            __result = StartLocal(chart);
             Core.Log.Msg($"[OfflineSession] RequestGameStart({patternId}) 서버 호출 생략, 로컬 세션 발급");
             return false;
         }
         catch (Exception e)
         {
-            Core.Log.Error($"[OfflineSession] RequestGameStart 래퍼 예외 발생: {e}");
+            if (!HookGuard.Fail(Hook, e, required: true)) Core.Log.Error($"[OfflineSession] RequestGameStart 래퍼 예외 발생: {e}");
+            CustomSongs.Current = null;
             return true;
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSurface.RequestGameStart", required: true)]
+    private static UniTask<SurfaceResult<GameSessionResult>> StartLocal(CustomChart chart)
+    {
+        var session = new GameSessionResult();
+        if (!UpdateResilience.SafeSetFieldOrProperty(session, "Token", OfflineSession.Token))
+            Core.Log.Warning("[OfflineSession] 세션 Token 설정 실패: RenewGameSession이 서버로 갈 수 있음");
+        var result = new UniTask<SurfaceResult<GameSessionResult>>(SurfaceResult<GameSessionResult>.Success(session));
+        ModHealth.BeginPlay(chart.Song);
+        return result;
     }
 }
 
 [HarmonyPatch(typeof(InGameSurface), nameof(InGameSurface.RenewGameSession))]
 internal static class InGameSurface_RenewGameSession_Patch
 {
+    private const string Hook = "InGameSurface.RenewGameSession";
+
     private static bool Prefix(string gameToken, ref UniTask<SurfaceResult> __result)
     {
         if (gameToken != OfflineSession.Token) return true;
-        __result = new UniTask<SurfaceResult>(SurfaceResult.Success());
-        return false;
+        try
+        {
+            __result = RenewLocal();
+            return false;
+        }
+        catch (Exception e)
+        {
+            HookGuard.Fail(Hook, e, required: true);
+            return true;
+        }
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSurface.RenewGameSession", required: true)]
+    private static UniTask<SurfaceResult> RenewLocal() => new(SurfaceResult.Success());
 }
 
 [HarmonyPatch(typeof(InGameSurface), nameof(InGameSurface.SendGameEnd))]
 internal static class InGameSurface_SendGameEnd_Patch
 {
+    private const string Hook = "InGameSurface.SendGameEnd";
+
+    /// <summary>
+    /// 모든 곡의 결과 전송에서 불린다. 결과·UniTask 생성은 별도 메서드로 격리해서, 업데이트로 그 타입이 바뀌어도
+    /// 일반 곡의 서버 기록 전송은 원본대로 진행된다. 커스텀 곡은 어떤 경우에도 서버로 보내지 않는다.
+    /// </summary>
     private static bool Prefix(GameEndResult request, PatternInfo patternInfo, ref UniTask<SurfaceResult<FreeModePlayRecordV2>> __result)
     {
-        if (!CustomSongs.IsCustom(patternInfo)) return true;
+        bool custom;
+        try { custom = CustomSongs.IsCustom(patternInfo); }
+        catch (Exception e)
+        {
+            // 패턴 번호를 못 읽으면 커스텀인지 모른다 → 지금 커스텀 곡을 플레이 중이었다면 서버로 보내지 않는다
+            HookGuard.Fail(Hook, e, required: true);
+            custom = CustomSongs.Current != null;
+        }
+        if (!custom) return true;
+
         try
         {
             var localRecord = BuildLocalRecord(request, patternInfo);
             if (localRecord != null)
             {
-                __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.Success(localRecord));
-                int score = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
-                Core.Log.Msg($"[OfflineSession] SendGameEnd 서버 전송 생략, 로컬 결과 반환 (score={score})");
-            }
-            else
-            {
-                __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.NetworkError());
+                __result = Success(localRecord);
+                Core.Log.Msg($"[OfflineSession] SendGameEnd 서버 전송 생략, 로컬 결과 반환 (score={FinalScore(request)})");
+                return false;
             }
         }
         catch (Exception e)
         {
-            Core.Log.Error($"[OfflineSession] 로컬 결과 생성 실패: {e}");
-            __result = new UniTask<SurfaceResult<FreeModePlayRecordV2>>(SurfaceResult<FreeModePlayRecordV2>.NetworkError());
+            if (!HookGuard.Fail(Hook, e)) Core.Log.Error($"[OfflineSession] 로컬 결과 생성 실패: {e}");
         }
+
+        try { __result = NetworkError(); }
+        catch (Exception e) { HookGuard.Fail(Hook, e); }
         return false;
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSurface.SendGameEnd", required: true)]
+    private static UniTask<SurfaceResult<FreeModePlayRecordV2>> Success(FreeModePlayRecordV2 record) =>
+        new(SurfaceResult<FreeModePlayRecordV2>.Success(record));
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSurface.SendGameEnd", required: true)]
+    private static UniTask<SurfaceResult<FreeModePlayRecordV2>> NetworkError() =>
+        new(SurfaceResult<FreeModePlayRecordV2>.NetworkError());
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int FinalScore(GameEndResult request) => Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
 
     /// <summary>
     /// 서버 응답 없이 결과 화면에 넘길 레코드를 만든다.
@@ -91,6 +151,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// 스냅샷은 Record* 메서드로 직접 채운다 (이전 값 0 → 이번 값).
     /// 직접 생성자 호출은 CreateRecordDirect로 분리했다. 같은 메서드에 두면 시그니처가 바뀔 때 JIT 단계에서 메서드 전체가 실패해 Reflection 폴백에 도달하지 못한다.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request, PatternInfo patternInfo)
     {
         // SectionDetailPanelController NRE 방지: SectionRecords가 null이면 빈 배열 할당
@@ -177,7 +238,7 @@ internal static class InGameSurface_SendGameEnd_Patch
         return null;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("결과 스냅샷 기록(FillSnapshot)")]
     private static void FillSnapshot(GameEndResultSnapShot snapshot, int finalScore, int accuracy, int mastery)
     {
         var zeroAccuracy = Il2CppPlatinaLab.Main.Common.Types.Accuracy.CreateFrom(0);
@@ -189,14 +250,14 @@ internal static class InGameSurface_SendGameEnd_Patch
         snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("정확도/P.A.T.C.H. 계산(ComputeGrade)")]
     private static void ComputeGrade(GameEndResult request, PatternInfo patternInfo, out int accuracy, out int mastery)
     {
         accuracy = Il2CppPlatinaLab.Main.Mastery.Utility.AccuracyV2Formula.GetAccuracyV2(request.Judge, request.WasPaused).Total;
         mastery = Il2CppPlatinaLab.Main.Mastery.Utility.MasteryV2Formula.CalcFromPatternInfo(patternInfo, accuracy)._ScaledRawValue_k__BackingField;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("결과 레코드 직접 생성(CreateRecordDirect)")]
     private static FreeModePlayRecordV2 CreateRecordDirect(GameEndResult request, GameEndResultSnapShot snapshot, EndGameResponse response,
         Il2CppSystem.Collections.Generic.List<Il2CppPlatinaLab.Main.Common.FeatureId> features)
     {
@@ -213,7 +274,7 @@ internal static class Diag_TrySave
 }
 
 [HarmonyPatch(typeof(Il2CppPlatinaLab.Main.Director.PlayDirector), nameof(Il2CppPlatinaLab.Main.Director.PlayDirector.Exit))]
-internal static class Diag_Exit
+internal static class PlayDirector_Exit_Patch
 {
     private static void Prefix(bool isGameOver) => Core.Log.Msg($"[Diag] PlayDirector.Exit(isGameOver={isGameOver})");
 

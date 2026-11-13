@@ -194,7 +194,8 @@ internal static class CoverManager_GetCoverSprite_Patch
 {
     private static void Postfix(string songId, ref Sprite __result)
     {
-        if (string.IsNullOrEmpty(songId)) return;
+        // 선곡 화면에서 모든 곡의 배너마다 불린다 → 커스텀 ID가 아니면 바로 끝낸다
+        if (!CustomSongs.IsCustomId(songId)) return;
         var song = CustomSongs.ById(songId);
         var path = song?.ThumbnailPath;
         if (path == null) return;
@@ -213,7 +214,9 @@ internal static class PreviewSoundController_Play_Patch
     private static void Prefix(string songId)
     {
         CustomSongs.Current = null; // 선곡 화면으로 돌아왔으므로 플레이 중 곡 해제
-        CustomMedia.PreviewSong = CustomSongs.ById(songId);
+        var song = CustomSongs.ById(songId);
+        song?.RefreshMedia(); // 곡 폴더에 커버·음원을 추가했으면 다시 확인
+        CustomMedia.PreviewSong = song;
     }
 }
 
@@ -226,53 +229,70 @@ internal static class PreviewSoundController_Play_Patch
 [HarmonyPatch(typeof(SoundData), nameof(SoundData.FromHEAudioClip), typeof(HEAudioClip), typeof(bool), typeof(Il2CppSystem.Action))]
 internal static class SoundData_FromHEAudioClip_Patch
 {
-    private static readonly HashSet<string> s_seen = new();
+    private const string Hook = "SoundData.FromHEAudioClip";
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> s_seen = new();
 
+    /// <summary>
+    /// 효과음을 포함한 모든 음원 생성에서 불린다. 커스텀 곡이 선택되지 않았으면 클립을 건드리지 않고,
+    /// 클립 이름 읽기 등 Unity/게임 멤버 접근은 TryReplace로 격리한다 (HookGuard 설명 참고).
+    /// </summary>
     private static void Prefix(ref HEAudioClip audioClip, bool isLooping, ref Il2CppSystem.Action afterDispose)
     {
-        var baseId = CustomSongs.s_baseSong?.Id;
-        if (baseId == null || audioClip == null) return;
         var song = CustomSongs.Current?.Song ?? CustomMedia.PreviewSong;
-        var path = song?.MusicPath;
+        var baseId = CustomSongs.s_baseSongId;
+        if (song == null || baseId == null || audioClip == null || HookGuard.IsDisabled(Hook)) return;
+        var path = song.MusicPath;
         if (path == null) return;
-        try
+        try { TryReplace(ref audioClip, ref afterDispose, baseId, path); }
+        catch (Exception e)
         {
-            var name = audioClip.name ?? "";
-            if (s_seen.Add(name)) Core.Log.Msg($"[CustomMedia] 음원 로드 감지: '{name}'");
-            if (!name.Contains(baseId)) return;
-            audioClip = CustomMedia.GetClip(path);
-            ModHealth.Mark("Music");
-
-            // afterDispose 실행 중 예외를 경고 로그로 격리하는 try-catch 래퍼 (GC 수명 대책은 아님)
-            if (afterDispose != null)
-            {
-                afterDispose = UpdateResilience.WrapAction(afterDispose);
-            }
-
-            Core.Log.Msg($"[CustomMedia] 음원 '{name}' -> {path} ({(CustomSongs.Current != null ? "인게임" : "미리듣기")})");
+            if (!HookGuard.Fail(Hook, e)) Core.Log.Error($"[CustomMedia] 음원 교체 실패: {e}");
         }
-        catch (Exception e) { Core.Log.Error($"[CustomMedia] 음원 교체 실패: {e}"); }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("SoundData.FromHEAudioClip")]
+    private static void TryReplace(ref HEAudioClip audioClip, ref Il2CppSystem.Action afterDispose, string baseId, string path)
+    {
+        var name = audioClip.name ?? "";
+        if (s_seen.TryAdd(name, 0)) Core.Log.Msg($"[CustomMedia] 음원 로드 감지: '{name}'");
+        if (!name.Contains(baseId, StringComparison.Ordinal)) return;
+        audioClip = CustomMedia.GetClip(path);
+        ModHealth.Mark("Music");
+
+        // afterDispose 실행 중 예외를 경고 로그로 격리하는 try-catch 래퍼 (GC 수명 대책은 아님)
+        if (afterDispose != null) afterDispose = UpdateResilience.WrapAction(afterDispose);
+
+        Core.Log.Msg($"[CustomMedia] 음원 '{name}' -> {path} ({(CustomSongs.Current != null ? "인게임" : "미리듣기")})");
     }
 }
 
 [HarmonyPatch(typeof(BGAPlayer), nameof(BGAPlayer.SetClip))]
 internal static class BGAPlayer_SetClip_Patch
 {
+    private const string Hook = "BGAPlayer.SetClip";
+
     private static void Postfix(BGAPlayer __instance, bool isLooping)
     {
         var path = CustomSongs.Current?.Song.VideoPath;
-        if (path == null) return;
-        try
+        if (path == null || __instance == null || HookGuard.IsDisabled(Hook)) return;
+        try { Apply(__instance, isLooping, path); }
+        catch (Exception e)
         {
-            var player = __instance?._videoPlayer;
-            if (player == null || player.WasCollected) return;
-            player.source = UnityEngine.Video.VideoSource.Url;
-            CustomMedia.SetUrl(player, new Uri(path).AbsoluteUri);
-            ModHealth.Mark("Video");
-            player.isLooping = isLooping;
-            player.Prepare();
-            Core.Log.Msg($"[CustomMedia] BGA <- {path}");
+            if (!HookGuard.Fail(Hook, e)) Core.Log.Error($"[CustomMedia] BGA 처리 실패: {e}");
         }
-        catch (Exception e) { Core.Log.Error($"[CustomMedia] BGA 처리 실패: {e}"); }
+    }
+
+    // _videoPlayer 등 게임 필드 접근 격리 (일반 곡의 BGA 설정도 이 훅을 지나간다)
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("BGAPlayer.SetClip")]
+    private static void Apply(BGAPlayer bga, bool isLooping, string path)
+    {
+        var player = bga._videoPlayer;
+        if (player == null || player.WasCollected) return;
+        player.source = UnityEngine.Video.VideoSource.Url;
+        CustomMedia.SetUrl(player, new Uri(path).AbsoluteUri);
+        ModHealth.Mark("Video");
+        player.isLooping = isLooping;
+        player.Prepare();
+        Core.Log.Msg($"[CustomMedia] BGA <- {path}");
     }
 }

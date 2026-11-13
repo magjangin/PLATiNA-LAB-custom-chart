@@ -38,11 +38,24 @@ internal static class ModHealth
     private static CustomSong s_playing;
     private static bool s_checked;
 
-    public static bool CustomSongsAllowed { get; private set; } = true;
+    private static volatile bool s_customSongsAllowed = true;
+    public static bool CustomSongsAllowed => s_customSongsAllowed;
+
+    /// <summary>
+    /// 실행 중 필수 경로가 망가졌을 때(HookGuard가 바인딩 실패 감지) 커스텀 곡 주입을 끈다.
+    /// 이미 주입된 곡은 선곡 화면에 남지만, 서버 우회가 안 되는 상태로 플레이하지 않도록 RequestGameStart가 원본으로 넘긴다.
+    /// </summary>
+    public static void DisableCustomSongs(string reason)
+    {
+        if (!s_customSongsAllowed) return;
+        s_customSongsAllowed = false;
+        Core.Log.Error($"[Health] 커스텀 곡 주입을 끕니다: {reason}");
+    }
 
     public static void CheckOnStart()
     {
         LogBuildId();
+        HookGuard.Precheck(typeof(ModHealth).Assembly);
         CheckRequiredPatches();
     }
 
@@ -93,8 +106,7 @@ internal static class ModHealth
                 Core.Log.Msg($"[Health] 필수 패치 정상 ({s_requiredPatches.Length}종 + Locate {locate}건, 전체 {patched.Count}개 메서드)");
                 return;
             }
-            CustomSongsAllowed = false;
-            Core.Log.Error($"[Health] 필수 패치 누락으로 커스텀 곡 주입을 끕니다: {string.Join(", ", missing)}");
+            DisableCustomSongs($"필수 패치 누락 {string.Join(", ", missing)}");
         }
         catch (Exception e)
         {
@@ -135,6 +147,8 @@ internal static class ModHealth
             if (song.MusicPath != null && !s_fired.Contains("Music")) missing.Add("음원 교체(SoundData.FromHEAudioClip)");
             if (song.VideoPath != null && !s_fired.Contains("Video")) missing.Add("BGA 교체(BGAPlayer.SetClip)");
         }
+        var disabled = HookGuard.Disabled;
+        if (disabled.Count > 0) Core.Log.Warning($"[Health] 바인딩 실패로 꺼진 훅: {string.Join(", ", disabled)}");
         if (missing.Count == 0) Core.Log.Msg($"[Health] {song.Id} 핵심 훅 호출 정상");
         else Core.Log.Warning($"[Health] {song.Id}에서 호출되지 않은 훅(도중에 나간 경우 무시): {string.Join(", ", missing)}");
     }

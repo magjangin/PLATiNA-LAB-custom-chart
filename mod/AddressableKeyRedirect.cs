@@ -118,22 +118,47 @@ internal static class AddressableKeyRedirect
         catch { return "?"; }
     }
 
-    /// <summary>__0 = key. 첫 인자가 Il2CppSystem.Object인 메서드만 패치하므로 위치로 받아도 타입이 맞는다.</summary>
+    /// <summary>
+    /// __0 = key. 첫 인자가 Il2CppSystem.Object인 메서드만 패치하므로 위치로 받아도 타입이 맞는다.
+    /// 게임의 모든 Addressables 로드(효과음·UI·차트 등)가 지나가므로, 커스텀 곡 키가 아니면 할당 없이 끝낸다:
+    /// 관리 문자열로 바꾸기 전에 IL2CPP 문자열의 UTF-16 버퍼에서 접두사(hwa_)를 직접 찾는다.
+    /// </summary>
     private static void Prefix(ref Il2CppSystem.Object __0)
     {
+        var baseId = CustomSongs.s_baseSongId;
+        if (baseId == null || !CustomSongs.Injected) return;
         var key = __0;
-        if (key == null || key.Pointer == IntPtr.Zero || CustomSongs.s_baseSong == null || CustomSongs.All.Count == 0) return;
+        if (key == null) return;
         try
         {
-            var classPtr = IL2CPP.il2cpp_object_get_class(key.Pointer);
+            var ptr = key.Pointer;
+            if (ptr == IntPtr.Zero) return;
+            var classPtr = IL2CPP.il2cpp_object_get_class(ptr);
             if (classPtr == IntPtr.Zero || classPtr != Il2CppClassPointerStore<string>.NativeClassPtr) return;
-            var s = IL2CPP.Il2CppStringToManaged(key.Pointer);
-            if (string.IsNullOrEmpty(s) || !s.Contains(CustomSongs.IdPrefix)) return;
+            string s = null;
+            if (s_useNativeScan)
+            {
+                if (s_selfChecks < SelfCheckCount)
+                {
+                    // 처음 몇 건은 네이티브 검사와 관리 문자열 검사를 둘 다 해서 결과를 맞춰 본다.
+                    // 다르면(인터롭/IL2CPP 문자열 배치 변경 등) 이후로는 관리 문자열 경로만 쓴다.
+                    s = IL2CPP.Il2CppStringToManaged(ptr);
+                    bool expected = s != null && s.Contains(CustomSongs.IdPrefix, StringComparison.Ordinal);
+                    if (NativeContains(ptr, CustomSongs.IdPrefix) != expected)
+                    {
+                        s_useNativeScan = false;
+                        Core.Log.Warning($"[KeyRedirect] 네이티브 문자열 검사 결과가 '{s}'에서 다름 → 관리 문자열 검사로 전환");
+                    }
+                    else if (Interlocked.Increment(ref s_selfChecks) == SelfCheckCount)
+                        Core.Log.Msg($"[KeyRedirect] 네이티브 문자열 검사 자체 검증 {SelfCheckCount}건 일치");
+                }
+                else if (!NativeContains(ptr, CustomSongs.IdPrefix)) return;
+            }
+            s ??= IL2CPP.Il2CppStringToManaged(ptr);
+            if (s == null || !s.Contains(CustomSongs.IdPrefix, StringComparison.Ordinal)) return;
             var song = CustomSongs.FindIdIn(s);
             if (song == null) return;
-            var baseId = CustomSongs.s_baseSong.Id;
-            if (string.IsNullOrEmpty(baseId)) return;
-            var redirected = s.Replace(song.Id, baseId);
+            var redirected = s.Replace(song.Id, baseId, StringComparison.Ordinal);
             var newPtr = IL2CPP.ManagedStringToIl2Cpp(redirected);
             if (newPtr == IntPtr.Zero) return;
             __0 = new Il2CppSystem.Object(newPtr);
@@ -142,6 +167,20 @@ internal static class AddressableKeyRedirect
             lock (s_logLock) first = s_loggedRedirects.Add(s);
             if (first) Core.Log.Msg($"[KeyRedirect] '{s}' -> '{redirected}'");
         }
-        catch (Exception e) { Core.Log.Warning($"[KeyRedirect] 키 치환 실패: {e.Message}"); }
+        catch (Exception e) { HookGuard.Fail("IResourceLocator.Locate", e); }
+    }
+
+    private const int SelfCheckCount = 32;
+    private static volatile bool s_useNativeScan = true;
+    private static int s_selfChecks;
+
+    /// <summary>IL2CPP 문자열(UTF-16)에 needle이 있는지 관리 문자열을 만들지 않고 확인한다.</summary>
+    private static unsafe bool NativeContains(IntPtr il2cppString, string needle)
+    {
+        int length = IL2CPP.il2cpp_string_length(il2cppString);
+        if (length < needle.Length) return false;
+        char* chars = IL2CPP.il2cpp_string_chars(il2cppString);
+        if (chars == null) return false;
+        return new ReadOnlySpan<char>(chars, length).IndexOf(needle.AsSpan(), StringComparison.Ordinal) >= 0;
     }
 }

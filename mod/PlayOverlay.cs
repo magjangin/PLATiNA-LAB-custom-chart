@@ -64,16 +64,37 @@ internal static class PlayOverlay
     private static readonly Dictionary<(int, int, int), Sprite> s_shapeSprites = new();
     private static readonly HashSet<string> s_warned = new();
 
+    // ---------------- 그리기 캐시 ----------------
+    // 매 프레임 바뀌지 않는 부분(판정바 틀·범위·중앙선, 키 칸 위치·글자)은 화면 크기나 설정이 바뀔 때만 다시 설정한다.
+    // UI 속성 설정은 하나하나가 IL2CPP 호출이고 문자열 설정은 IL2CPP 문자열 할당까지 일으킨다.
+    // (record struct는 Nullable 특성을 요구해 CS0656 → 값 튜플 + 유효 플래그)
+    private static (float screenW, float screenH, bool vertical, int trackShape, int rangeShape, string side, float r0, float r1, float r2, float r3) s_barLayout;
+    private static bool s_barLayoutValid;
+    private static int s_hitVersion, s_labelVersion = -1;
+    private static (float screenW, float screenH, string[] labels, int pitchIndex) s_keyLayout; // labels는 참조 비교 (BindKeys마다 새 배열)
+    private static bool s_keyLayoutValid;
+    private static int[] s_keyDrawn = Array.Empty<int>(); // 칸별로 마지막에 그린 상태 (-1 = 미정, 0 = 뗌, 1 = 누름)
+    private const int MaxPending = 256;
+
     public static void Reset()
     {
         lock (s_lock) { s_pending.Clear(); s_history.Clear(); s_last = null; }
         lock (s_keyLock) { s_laneOfKey = null; s_mode = LineModeType.None; s_pressed = Array.Empty<bool>(); s_labels = Array.Empty<string>(); }
+        // 곡 시작마다 설정 파일을 다시 읽으므로(색·모양·위치) 그리기 캐시도 비운다
+        s_barLayoutValid = false;
+        s_keyLayoutValid = false;
+        s_labelVersion = -1;
     }
 
     /// <summary>게임 루프 스레드에서 호출. error = 게임 단위(ms), 음수 = FAST.</summary>
     public static void RegisterHit(double error, JudgmentType judgment)
     {
-        lock (s_lock) s_pending.Add(new HitTick { OffsetMs = (float)-error, Judgment = judgment, Time = -1f });
+        lock (s_lock)
+        {
+            // 메인 스레드가 비우지 못하는 상황(창 비활성 등)에서도 무한히 쌓이지 않게 오래된 것부터 버린다
+            if (s_pending.Count >= MaxPending) s_pending.RemoveAt(0);
+            s_pending.Add(new HitTick { OffsetMs = (float)-error, Judgment = judgment, Time = -1f });
+        }
     }
 
     /// <summary>같은 경고는 한 번만 남긴다 (매 프레임 도는 코드라 로그 스팸 방지).</summary>
@@ -266,10 +287,14 @@ internal static class PlayOverlay
                 var h = p; h.Time = now;
                 s_history.Add(h);
                 s_last = h;
+                s_hitVersion++;
             }
             s_pending.Clear();
         }
-        s_history.RemoveAll(t => now - t.Time > Duration);
+        // 기록은 시간순으로 쌓이므로 만료된 것은 앞쪽에 몰려 있다 (예전 RemoveAll 람다는 매 프레임 클로저를 할당했다)
+        int expired = 0;
+        while (expired < s_history.Count && now - s_history[expired].Time > Duration) expired++;
+        if (expired > 0) s_history.RemoveRange(0, expired);
 
         float screenW = Screen.width, screenH = Screen.height;
         bool vertical = ModConfig.JudgmentBarVertical;
@@ -289,47 +314,72 @@ internal static class PlayOverlay
         float maxMs = RangeMs[^1];
         float scale = (vertical ? barH / 2f : barW / 2f) / maxMs;
 
-        SetRect(s_track, new Rect(cx - barW / 2f, cy - barH / 2f, barW, barH), new Color(0.08f, 0.08f, 0.08f, 0.65f), trackShape);
-        SetRange(s_ranges[0], cx, cy, barW, barH, vertical, RangeMs[2] * 2f * scale, new Color(0.65f, 0.55f, 0.12f, 0.18f), rangeShape); // GREAT
-        SetRange(s_ranges[1], cx, cy, barW, barH, vertical, RangeMs[1] * 2f * scale, new Color(0.30f, 0.60f, 0.90f, 0.22f), rangeShape); // PERFECT
-        SetRange(s_ranges[2], cx, cy, barW, barH, vertical, RangeMs[0] * 2f * scale, new Color(0.85f, 0.85f, 0.85f, 0.28f), rangeShape); // PERFECT HIGH
-        SetRect(s_center, vertical ? new Rect(cx - barW / 2f - 2f, cy - 1f, barW + 4f, 2f) : new Rect(cx - 1f, cy - barH / 2f - 2f, 2f, barH + 4f), Color.white);
+        var layout = (screenW, screenH, vertical, trackShape, rangeShape, ModConfig.JudgmentBarSide,
+            RangeMs[0], RangeMs[1], RangeMs[2], RangeMs[3]);
+        bool layoutChanged = !s_barLayoutValid || s_barLayout != layout;
+        if (layoutChanged)
+        {
+            s_barLayout = layout;
+            s_barLayoutValid = true;
+            SetRect(s_track, new Rect(cx - barW / 2f, cy - barH / 2f, barW, barH), new Color(0.08f, 0.08f, 0.08f, 0.65f), trackShape);
+            SetRange(s_ranges[0], cx, cy, barW, barH, vertical, RangeMs[2] * 2f * scale, new Color(0.65f, 0.55f, 0.12f, 0.18f), rangeShape); // GREAT
+            SetRange(s_ranges[1], cx, cy, barW, barH, vertical, RangeMs[1] * 2f * scale, new Color(0.30f, 0.60f, 0.90f, 0.22f), rangeShape); // PERFECT
+            SetRange(s_ranges[2], cx, cy, barW, barH, vertical, RangeMs[0] * 2f * scale, new Color(0.85f, 0.85f, 0.85f, 0.28f), rangeShape); // PERFECT HIGH
+            SetRect(s_center, vertical ? new Rect(cx - barW / 2f - 2f, cy - 1f, barW + 4f, 2f) : new Rect(cx - 1f, cy - barH / 2f - 2f, 2f, barH + 4f), Color.white);
+        }
 
         const int MaxVisibleTicks = 32;
         int activeCount = Math.Min(s_history.Count, MaxVisibleTicks);
-        while (s_ticks.Count < activeCount) s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
+        if (s_ticks.Count < activeCount)
+        {
+            while (s_ticks.Count < activeCount) s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
+            s_label.transform.SetAsLastSibling(); // 새 틱이 글자를 덮지 않게
+        }
         for (int i = 0; i < s_ticks.Count; i++)
         {
-            if (i >= activeCount) { s_ticks[i].enabled = false; continue; }
+            var tick = s_ticks[i];
+            if (i >= activeCount)
+            {
+                if (tick.enabled) tick.enabled = false;
+                continue;
+            }
             // 최근 틱 우선 표시 (오래된 틱은 자동 가려짐)
             var t = s_history[s_history.Count - activeCount + i];
             float ms = Mathf.Clamp(t.OffsetMs, -maxMs, maxMs);
             var c = JudgeColor(t.Judgment); c.a = Mathf.Clamp01(1f - (now - t.Time) / Duration) * 0.9f;
-            SetRect(s_ticks[i], vertical
+            Place(tick, vertical
                 ? new Rect(cx - barW / 2f - 1f, cy - ms * scale - 1f, barW + 2f, 2f)  // 위 = FAST
-                : new Rect(cx + ms * scale - 1f, cy - barH / 2f - 1f, 2f, barH + 2f), // 오른쪽 = FAST
-                c);
+                : new Rect(cx + ms * scale - 1f, cy - barH / 2f - 1f, 2f, barH + 2f)); // 오른쪽 = FAST
+            tick.color = c; // 틱은 스프라이트 없는 사각형 (NewImage 기본값)
+            if (!tick.enabled) tick.enabled = true;
         }
-        s_label.transform.SetAsLastSibling();
 
         if (s_last is HitTick last && now - last.Time < Duration)
         {
-            string text = $"{(last.OffsetMs >= 0 ? "+" : "")}{last.OffsetMs:F1} ms · {JudgeName(last.Judgment)} ({(last.OffsetMs >= 0 ? "FAST" : "SLOW")})";
+            // 글자·위치는 새 판정이 들어오거나 배치가 바뀔 때만 다시 설정한다. 매 프레임은 투명도만 바꾼다.
+            if (s_labelVersion != s_hitVersion || layoutChanged)
+            {
+                s_labelVersion = s_hitVersion;
+                string text = $"{(last.OffsetMs >= 0 ? "+" : "")}{last.OffsetMs:F1} ms · {JudgeName(last.Judgment)} ({(last.OffsetMs >= 0 ? "FAST" : "SLOW")})";
+                bool labelLeft = vertical && right;
+                const float labelW = 320f;
+                var rect = vertical
+                    ? (labelLeft ? new Rect(cx - barW / 2f - 10f - labelW, cy - 12f, labelW, 24f) : new Rect(cx + barW / 2f + 10f, cy - 12f, labelW, 24f))
+                    : new Rect(cx - 90f, cy - barH / 2f - 28f, labelW, 24f);
+                var align = labelLeft ? TextAlignmentOptions.MidlineRight : TextAlignmentOptions.MidlineLeft;
+                SetText(s_labelShadow, new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), text, align);
+                SetText(s_label, rect, text, align);
+            }
             float alpha = Mathf.Clamp01(1f - (now - last.Time) / Duration);
-            bool labelLeft = vertical && right;
-            const float labelW = 320f;
-            var rect = vertical
-                ? (labelLeft ? new Rect(cx - barW / 2f - 10f - labelW, cy - 12f, labelW, 24f) : new Rect(cx + barW / 2f + 10f, cy - 12f, labelW, 24f))
-                : new Rect(cx - 90f, cy - barH / 2f - 28f, labelW, 24f);
-            var align = labelLeft ? TextAlignmentOptions.MidlineRight : TextAlignmentOptions.MidlineLeft;
-            SetText(s_labelShadow, new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), text, new Color(0f, 0f, 0f, alpha * 0.8f), align);
+            s_labelShadow.color = new Color(0f, 0f, 0f, alpha * 0.8f);
             var c = JudgeColor(last.Judgment); c.a = alpha;
-            SetText(s_label, rect, text, c, align);
+            s_label.color = c;
         }
-        else
+        else if (s_label.enabled || s_labelShadow.enabled)
         {
             s_label.enabled = false;
             s_labelShadow.enabled = false;
+            s_labelVersion = -1; // 다시 나타날 때 글자를 새로 설정
         }
     }
 
@@ -340,11 +390,10 @@ internal static class PlayOverlay
             : new Rect(cx - size / 2f, cy - barH / 2f + 1f, size, barH - 2f), color, shape);
     }
 
-    private static void SetText(TextMeshProUGUI t, Rect r, string text, Color c, TextAlignmentOptions align)
+    private static void SetText(TextMeshProUGUI t, Rect r, string text, TextAlignmentOptions align)
     {
         Place(t, r);
         t.text = text;
-        t.color = c;
         t.alignment = align;
         t.enabled = true;
     }
@@ -354,20 +403,29 @@ internal static class PlayOverlay
     [HarmonyPatch(typeof(PatternPlayer), "ProcessInputEvent")]
     private static class PatternPlayer_ProcessInputEvent_Patch
     {
+        private const string Hook = "PatternPlayer.ProcessInputEvent";
+
+        /// <summary>키 입력마다 게임 루프 스레드에서 불린다. 게임 멤버 접근은 HandleInput으로 격리 (HookGuard 설명 참고).</summary>
         private static void Prefix(PatternPlayer __instance, PatternPlayer.InputEvent input)
         {
-            if (!ModConfig.EnableKeyViewer) return;
-            try
+            if (!InPlay || !ModConfig.EnableKeyViewer || __instance == null || HookGuard.IsDisabled(Hook)) return;
+            try { HandleInput(__instance, input); }
+            catch (Exception e)
             {
-                if (__instance == null) return;
-                lock (s_keyLock)
-                {
-                    if (s_laneOfKey == null || s_mode != __instance.LineMode) BindKeys(__instance.LineMode);
-                    if (s_laneOfKey.TryGetValue(input.KeyCode, out var index) && index < s_pressed.Length)
-                        s_pressed[index] = input.IsPressed;
-                }
+                if (!HookGuard.Fail(Hook, e)) WarnOnce($"[KeyViewer] 입력 처리 오류: {e.Message}");
             }
-            catch (Exception e) { WarnOnce($"[KeyViewer] 입력 처리 오류: {e.Message}"); }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternPlayer.ProcessInputEvent")]
+        private static void HandleInput(PatternPlayer player, PatternPlayer.InputEvent input)
+        {
+            var mode = player.LineMode;
+            lock (s_keyLock)
+            {
+                if (s_laneOfKey == null || s_mode != mode) BindKeys(mode);
+                if (s_laneOfKey.TryGetValue(input.KeyCode, out var index) && index < s_pressed.Length)
+                    s_pressed[index] = input.IsPressed;
+            }
         }
     }
 
@@ -440,31 +498,54 @@ internal static class PlayOverlay
             var bg = NewImage(s_keyGroup, $"Key{s_keys.Count}");
             var border = bg.gameObject.AddComponent<Outline>();
             border.effectDistance = new Vector2(1f, -1f);
-            s_keys.Add((bg, border, NewText(bg.transform, "Label", 15)));
+            var label = NewText(bg.transform, "Label", 15);
+            var rt = label.rectTransform; // 글자는 칸 전체를 채운다 (한 번만 설정)
+            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
+            label.alignment = TextAlignmentOptions.Center;
+            s_keys.Add((bg, border, label));
+            s_keyLayoutValid = false;
         }
 
         const float boxW = 44f, boxH = 44f, gap = 6f, bottom = 56f;
         float pitchW = boxW * 2f + gap;
-        float totalW = 0;
-        for (int i = 0; i < labels.Length; i++) totalW += (i == pitchIndex ? pitchW : boxW) + (i > 0 ? gap : 0);
-        float x = (Screen.width - totalW) / 2f;
-        float y = Screen.height - bottom - boxH;
 
-        for (int i = 0; i < s_keys.Count; i++)
+        // 칸 배치·글자는 화면 크기나 키 배열(라인 모드)이 바뀔 때만 다시 설정한다
+        var layout = ((float)Screen.width, (float)Screen.height, labels, pitchIndex);
+        if (!s_keyLayoutValid || s_keyLayout != layout)
         {
+            s_keyLayout = layout;
+            s_keyLayoutValid = true;
+            if (s_keyDrawn.Length != s_keys.Count) s_keyDrawn = new int[s_keys.Count];
+            Array.Fill(s_keyDrawn, -1);
+            float totalW = 0;
+            for (int i = 0; i < labels.Length; i++) totalW += (i == pitchIndex ? pitchW : boxW) + (i > 0 ? gap : 0);
+            float x = (layout.Item1 - totalW) / 2f;
+            float y = layout.Item2 - bottom - boxH;
+            for (int i = 0; i < s_keys.Count; i++)
+            {
+                var (bg, _, text) = s_keys[i];
+                if (i >= labels.Length) { bg.gameObject.SetActive(false); continue; }
+                bg.gameObject.SetActive(true);
+                float w = i == pitchIndex ? pitchW : boxW;
+                Place(bg, new Rect(x, y, w, boxH));
+                bg.sprite = null;
+                bg.enabled = true;
+                text.text = labels[i];
+                x += w + gap;
+            }
+        }
+
+        // 누름 상태는 바뀐 칸만 색을 다시 칠한다
+        for (int i = 0; i < labels.Length && i < s_keys.Count; i++)
+        {
+            int state = i < len && s_pressedBuffer[i] ? 1 : 0;
+            if (s_keyDrawn[i] == state) continue;
+            s_keyDrawn[i] = state;
             var (bg, border, text) = s_keys[i];
-            if (i >= labels.Length) { bg.gameObject.SetActive(false); continue; }
-            bg.gameObject.SetActive(true);
-            float w = i == pitchIndex ? pitchW : boxW;
-            bool down = i < len && s_pressedBuffer[i];
-            SetRect(bg, new Rect(x, y, w, boxH), down ? (i == pitchIndex ? ModConfig.KeyViewerPitchPressedColor : ModConfig.KeyViewerPressedColor) : ModConfig.KeyViewerNormalColor);
+            bool down = state == 1;
+            bg.color = down ? (i == pitchIndex ? ModConfig.KeyViewerPitchPressedColor : ModConfig.KeyViewerPressedColor) : ModConfig.KeyViewerNormalColor;
             border.effectColor = down ? new Color(1f, 1f, 1f, 0.95f) : new Color(1f, 1f, 1f, 0.35f);
-            var rt = text.rectTransform;
-            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
-            text.text = labels[i];
-            text.alignment = TextAlignmentOptions.Center;
             text.color = down ? new Color(0.05f, 0.05f, 0.05f, 1f) : new Color(1f, 1f, 1f, 0.9f);
-            x += w + gap;
         }
     }
 
@@ -477,6 +558,8 @@ internal static class PlayOverlay
         if (s_shapeSprites.TryGetValue((shape, w, h), out var cached) && cached != null) return cached;
         if (s_shapeSprites.Count > 64)
         {
+            // 판정바 틀·범위가 쓰던 스프라이트도 파괴되므로 다음 프레임에 다시 설정하게 한다
+            s_barLayoutValid = false;
             foreach (var kvp in s_shapeSprites)
             {
                 if (kvp.Value != null)

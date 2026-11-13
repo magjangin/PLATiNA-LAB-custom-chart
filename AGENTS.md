@@ -16,6 +16,7 @@
   - `H:\source\repos\PLATiNA LAB-unity-il2cpp\src_dummy\Main` (`Il2CppPlatinaLab.Main.dll`)
   - `H:\source\repos\PLATiNA LAB-unity-il2cpp\src_dummy\DataModel` (`Il2CppPlatinaLab.DataModel.dll`)
 - **실행 로그:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\logs\`
+- **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 람다 판별·Locate 후보를 게임 없이 검증)
 - **후킹 후보 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
 - **업데이트 내성 감사 & 게임 업데이트 후 확인 순서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
@@ -89,7 +90,7 @@
   - **중국어 메타 및 파일명 지원 (`CustomSongs`, `BmsConverter`):** info.txt 중국어 키워드(歌名/曲师/谱师/难度/轨道 등) 파싱, 封面/曲绘/音乐 등 파일명 확장, 롱노트/피치노트 중국어 키워드(长条开始/结束, 滑音, 音高) 인식.
   - **설정 파일 중국어 지원 (`ModConfig`):** config.txt에서 开/关, 开启/关闭, 是/否 및 중국어 색상명(红, 蓝, 绿, 黄, 白, 黑, 橙, 紫 등) 파싱 지원.
   - **로케일 폰트 자동 연동 (`PlayOverlay.FindFont`):** 게임 내 LocalizeTMPFont 컴포넌트의 폰트를 우선 탐색하여 중국어/CJK 글리프 Tofu(사각형 깨짐) 방지.
-  - **강제 나가기 상태 격리 (`OfflineSession.Diag_Exit`):** 곡 플레이 도중 나가기(Exit) 시 오토플레이 복원, 오버레이 비활성화, 커스텀 세션 플래그를 완벽 초기화하여 상태 잔류 방지.
+  - **강제 나가기 상태 격리 (`OfflineSession.cs` `PlayDirector_Exit_Patch`, 예전 이름 `Diag_Exit`):** 곡 플레이 도중 나가기(Exit) 시 오토플레이 복원, 오버레이 비활성화, 커스텀 세션 플래그를 완벽 초기화하여 상태 잔류 방지.
 - **메모리 누수(ogg 제외) 감사 및 영문 축약형 정규화 보강 (2026-11-07):**
   - **커버 텍스처 LRU 캐시 및 VRAM 해제 (`CustomMedia.GetCover`):** 최대 24개 초과 시 가장 오래된 Sprite 및 Texture2D를 `UnityEngine.Object.Destroy`로 명시적 파괴하여 VRAM 누수 원천 차단.
   - **IL2CPP MemoryStream 명시적 해제 (`CustomCharts.ReadAll`):** try-finally 블록에서 `ms.Dispose()` 호출로 네이티브 힙 누수 방지, 차트 핫리로드 캐시 엔트리 상한(32개) 제어.
@@ -111,6 +112,11 @@
   - **Locate 탐색:** 엄격 시그니처(`bool Locate(Il2CppSystem.Object, Type, out IList)`) → 0건이면 완화 조건. Prefix는 `__0`(타입은 탐색 단계에서 확인). `ModHealth`가 3건 미만이면 경고. 2026-11-12 실행 확인: 3건 패치, `[Health] 필수 패치 정상`, 선곡 화면에서 커버·미리듣기 키 치환(`hwa_001` → `wits_biz`) 발생. 플레이(차트/BGM/BGA)는 이번 빌드로 미확인.
   - **인코딩 감지:** 예전 코드는 UTF-8이 아니면 무조건 GBK였다(문서와 불일치) → Shift-JIS/CP949/GBK/Big5 바이트 패턴 점수 비교로 교체.
   - **차트 캐시:** 음원·영상 수정 시간까지 비교(바꾸면 endPosition 재계산). 커버 LRU 중복 등록으로 새 스프라이트가 파괴되던 문제 수정.
+- **훅 예외 격리·병목·람다 판별 3차 (2026-11-14, 상세 `docs/update_resilience_audit.md` "3차"):** 인게임은 메인 메뉴까지만 확인(사전 점검·필수 패치·주입·네이티브 문자열 자체 검증 32건 일치). **선곡·플레이·결과 화면은 이 빌드로 미확인.**
+  - **규칙 — 일반 곡에도 도는 훅은 본문에서 게임 멤버를 직접 참조하지 않는다 (`mod/HookGuard.cs`):** Il2CppInterop 트램펄린은 훅 예외를 잡고 원본 대신 기본값을 돌려준다(`During invoking native->managed trampoline`). 그래서 Prefix 본문이 업데이트로 사라진 멤버를 참조하면 JIT 실패로 **모든 곡**의 그 게임 메서드가 망가진다(빠른 경로 `return`도 소용없음 — 메서드 전체가 컴파일 안 됨). → 게임 멤버 접근은 `[MethodImpl(NoInlining), Guarded("훅 이름", required)]` 메서드로 빼고 try 안에서 호출, 실패는 `HookGuard.Fail`. 바인딩 실패면 그 훅을 끄고(필수면 커스텀 곡 주입도 끔), 그 밖의 예외는 한 번만 경고.
+  - **사전 점검:** `HookGuard.Precheck`가 시작 시 `[Guarded]` 메서드를 `RuntimeHelpers.PrepareMethod`로 미리 JIT (순수 .NET 6 실측: 없는 메서드·필드·프로퍼티 참조는 여기서 Missing*Exception). 로그 `[HookGuard] 훅 바인딩 사전 점검 정상 (20개 메서드, 3ms)`.
+  - **병목:** Locate 키를 IL2CPP 문자열 버퍼에서 직접 검사(할당 0, 처음 32건은 관리 문자열 결과와 비교해 다르면 전환), 일반 곡 차트 스트림은 복사하지 않고 그대로, 곡 폴더 미디어 경로 5초 캐시(`RefreshMedia`), 곡/차트 조회 사전, SongInfo 훅은 주입 전 바로 원본, `DetermineRunning`은 `CustomSongs.Current == null`이면 바로 원본, 판정바를 끄면 판정을 읽지 않음, 오버레이는 화면 크기·설정이 바뀔 때만 레이아웃 재설정.
+  - **람다 판별 4번째 신호 "멤버 모양":** 인터롭은 컴파일러 생성 필드를 같은 이름 프로퍼티로 내보낸다(`__1__state`, `__t__builder`, `__4__this`, `__9`, `__9__8_0`, `__u__1`). `tools/interop-harness`(오프라인, 게임 실행 불필요)로 155개 어셈블리 30,509개 타입: 이름 패턴 단독 누락·오탐 0, 멤버 모양 단독 오탐 0(상태 머신 96%·람다 캐시 83% 판별). 인터롭이 `<`를 그대로 둔 UnityEngine 타입 281개가 2차 정답 기준에서 빠져 있었음 → 정답·이름 패턴에 포함.
 
 ---
 
@@ -153,6 +159,8 @@
 - **`InGameSettingHelper.IsAutoPlayMode` / `InputStateMachine.Interpret` 패치:** 둘 다 호출부에 인라인돼 직접 호출 없음 → 설정값 자체를 바꾸거나(`SetExtra`) 직접 호출되는 `ProcessInputEvent`를 후킹.
 - **이전 세션 `xrefs.py`(E8 호출 탐색)가 아무것도 못 찾음:** `.text` 섹션만 훑었는데 GameAssembly 코드는 다른 실행 섹션에 있음 → 실행 가능(0x20000000) 섹션 전부를 훑어야 함.
 - **게임 exe 직접 실행:** `PlatformInitializationFailedException: Failed to initialize steam sdk` 후 종료 → `steam://run/3430470//-screen-fullscreen 0 -screen-width 1600 -screen-height 900/`로 Steam 경유 실행.
+- **`record`/`record struct` 사용 (2026-11-14):** `<Nullable>disable</Nullable>`이어도 레코드 합성 멤버가 `NullableAttribute`를 요구해 CS0656 → 일반 클래스나 값 튜플 + 유효 플래그로 대체.
+- **사용자가 PC를 쓰는 중에 게임 창으로 입력 보내기:** 서버 랭킹이 있는 온라인 게임이라 입력이 엉뚱한 화면에 들어갈 수 있다. `um win drive ... idle`이 1분 미만이면 입력을 보내지 말고 사용자에게 맡긴다(2026-11-14 idle 2.6초 → 중단).
 - **모드 프로젝트 Nullable enable 빌드:** `CS0656: System.Runtime.CompilerServices.NullableContextAttribute..ctor` 컴파일 오류 발생 → `<Nullable>disable</Nullable>`로 전환하여 해결.
 
 ---
@@ -170,6 +178,7 @@
 - **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`(게임 추출물), `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외 — 공개 저장소에 게임 바이너리/디컴파일 코드를 올리지 않는다.
 
 ## 7. 다음 단계 (미구현)
+- **2026-11-14 빌드(훅 격리·병목 수정) 인게임 확인:** 선곡 화면 커버·미리듣기 키 치환, 커스텀 곡 플레이(차트/BGM/BGA, 판정바·키뷰어·올 퍼펙트), 결과 화면, 일반 곡 1곡 플레이·결과 전송. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`과 `바인딩 실패로 꺼진 훅` 없음 확인.
 - 오토 플레이 인게임 확인(`IsScorable` 안전장치 포함). 키뷰어가 플레이 화면 하단 섹션 패널과 겹침 → 위치 조정 검토. 일시정지 화면 위에도 오버레이가 그려짐.
 - BMS 박자 변경(#mmm02)·STOP·PitchNote 인게임 판정 확인. 박자 변경은 PPP `bars`의 비 4/4 마디 position 소수부 의미 미확인 → 변박 원곡 덤프로 확인 후 구현.
 - 커스텀 BGM: `bgms[].sound`(예 `lolikami_165bpm.fmod.ogg`)는 FMOD 사운드 이름 → `SetMainTrackToPlay(SoundData)` 후킹으로 외부 ogg 주입 필요.

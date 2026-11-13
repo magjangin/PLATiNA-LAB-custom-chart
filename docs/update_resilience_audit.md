@@ -100,10 +100,85 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 | C6 | `UpdateResilience` 탐색 코드 중복, 빈 이름에서 예외, 같은 이름 프로퍼티 여럿이면 `AmbiguousMatchException` | **수정.** `FindProperty`/`FindField`로 통합 |
 | C7 | 판정바 폴백 GREAT ±85 (실측 ±80), 의미 없는 항등 함수 `customPathWrite`, CustomMedia 주석의 옛 훅 설명 | **정리** |
 
+## 3차 (2026-11-14): 훅 예외 격리, 병목, 람다 판별 신호 추가
+
+인게임: 수정 빌드로 게임을 두 번 실행해 메인 메뉴까지 확인했다. `[HookGuard] 훅 바인딩 사전 점검 정상 (20개 메서드, 3ms)`, `[Health] 필수 패치 정상 (10종 + Locate 3건)`, 커스텀 곡 주입, `[KeyRedirect] 네이티브 문자열 검사 자체 검증 32건 일치`. 사용자가 PC를 쓰는 중이라 게임 입력을 보내지 않았고, **선곡 화면·플레이·결과 화면은 이번 빌드로 미확인**이다.
+
+### 업데이트 내성: 훅 본문이 깨지면 일반 곡도 망가진다 (`HookGuard`)
+
+**실측(문자열):** Il2CppInterop의 native→managed 트램펄린은 훅에서 올라온 예외를 잡아 `During invoking native->managed trampoline`으로 로그하고 원본 대신 기본값을 돌려준다(`Il2CppInterop.HarmonySupport.dll`에 `ReportException`, `BeginCatchBlock`).
+**판독:** 1차 감사의 "같은 메서드의 `try`는 누락 멤버를 못 잡는다"가 Prefix 본문에도 그대로 적용된다. 본문이 사라진 멤버를 직접 참조하면 그 Prefix는 JIT 단계에서 실패하고, 빠른 경로(`if (커스텀 곡 아님) return`)가 있어도 소용없다(메서드 전체가 컴파일되지 않음). 그러면 `RequestGameStart`·`SendGameEnd`·`SoundData.FromHEAudioClip`·`CategoryCacheFactory.CreateAll` 등 **모든 곡**이 지나가는 게임 메서드가 기본값을 돌려주게 된다.
+
+| # | 훅 | 직접 참조하던 것 | 수정 |
+|---|---|---|---|
+| U1 | `RequestGameStart` | `GameSessionResult`, `UniTask`/`SurfaceResult` 생성 | `StartLocal`로 분리. 실패하면 커스텀 곡만 원본(서버 거부)으로 넘김 |
+| U2 | `RenewGameSession`, `SendGameEnd` | `UniTask`/`SurfaceResult` 생성, `request.Score` | `RenewLocal`/`Success`/`NetworkError`/`FinalScore` 분리. 커스텀 곡은 어떤 실패에서도 서버로 보내지 않음 |
+| U3 | `SoundData.FromHEAudioClip` | `audioClip.name` | `TryReplace` 분리 (효과음 포함 전 음원 생성 경로) |
+| U4 | `BGAPlayer.SetClip` | `_videoPlayer` | `Apply` 분리 |
+| U5 | `PatternPlayer.DetermineRunning` | `_isLastNoteProcessingTriggered`, `_patternData`, `CurrentTimeMicroseconds` | `TryHold`/`ClearFlag` 분리 |
+| U6 | `ProcessJudgeResult`, `ProcessInputEvent` | `JudgeResult.*`, `LineMode` | `Handle`/`HandleInput` 분리 |
+| U7 | `CategoryCacheFactory.CreateAll`, `UpdatePostProcessData` | `TagCategoryCache` 생성, `Key` | `AddCategory`/`LogCustom` 분리 |
+| U8 | `SongInfo.IsLock` 등 5종 | `__instance.Id`, `EncryptedBool` 암시 변환 | `CustomSongs.IsCustomSong`/`EncryptedFalse`로 통합 |
+| U9 | `InGameSettingManager.Save` | `Extra.SetExtra` | `SetExtraDirect` 분리 |
+| U10 | `GetPatternFileName` | try 없음 (`IsCustom` 예외가 그대로 올라감) | try + `Of`를 `NoInlining` |
+
+`HookGuard.Fail`: 바인딩 실패(`MissingMember`/`TypeLoad`/`BadImageFormat`)면 그 훅을 꺼서 게임 원본만 남기고(매 호출 예외 반복 방지), 필수 경로면 `ModHealth.DisableCustomSongs`로 커스텀 곡 주입도 끈다. 그 밖의 예외는 훅을 유지하고 같은 예외는 한 번만 경고한다. 꺼진 훅은 플레이 종료 시 `[Health]`가 다시 알린다.
+
+**사전 점검 (`HookGuard.Precheck`, `[Guarded]`):** 분리한 메서드에 `[Guarded("훅 이름", required)]`를 붙이고 시작 시 `RuntimeHelpers.PrepareMethod`로 미리 JIT한다.
+**실측(순수 .NET 6.0, 멤버를 지운 라이브러리로 바꿔치기):** 없는 메서드·필드·프로퍼티를 참조하는 메서드는 `PrepareMethod`에서 `MissingMethodException`/`MissingFieldException`, 정상 메서드는 통과.
+→ 업데이트로 깨진 훅은 첫 호출 전에 꺼지고, 필수 경로면 커스텀 곡이 처음부터 주입되지 않는다. 인게임 정상 빌드에서 20개 메서드 3ms.
+
+### 병목
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| B1 | `AddressableKeyRedirect.Prefix` | 게임의 모든 Addressables 로드마다 키를 관리 문자열로 변환(할당) | IL2CPP 문자열 UTF-16 버퍼에서 `hwa_`를 직접 검색(`il2cpp_string_chars`). 처음 32건은 기존 방식과 비교해 다르면 기존 방식으로 전환 — 인게임 32건 일치 |
+| B2 | `CustomCharts.Process` | **일반 곡도** 차트 JSON 전체를 관리 배열로 복사하고 새 MemoryStream으로 다시 감쌈 | 덤프 꺼짐 + 커스텀 차트 없음이면 원본 스트림 그대로 |
+| B3 | `CustomSong.MusicPath/VideoPath/ThumbnailPath` | 호출마다 후보 파일 최대 12개 `File.Exists` (커버·음원 훅에서 반복) | 5초 캐시 + 곡 시작·미리듣기 때 `RefreshMedia` |
+| B4 | `ById`/`ByPatternIndex`/`ByKey` | 모든 곡의 훅에서 목록 순회 | 사전 (Scan에서 통째로 교체) |
+| B5 | `SongInfo` 판정 훅 5종 | 주입 전에도 모든 곡의 Id를 IL2CPP 문자열에서 변환 | `Injected` 전에는 바로 원본 |
+| B6 | `DetermineRunning` | 매 프레임 + 입력 스레드에서 `PlayPattern` 래퍼 생성 | `CustomSongs.Current == null`이면 바로 원본 |
+| B7 | `ProcessJudgeResult` | 판정바를 꺼도 판정을 모으기만 하고 비우지 않음, 올 퍼펙트가 같은 세터를 직접+리플렉션으로 두 번 | 둘 다 꺼지면 아무것도 안 읽음, 대기열 상한 256, 세터 실패 시에만 리플렉션 |
+| B8 | `PlayOverlay` | 매 프레임 판정바 틀·범위·중앙선·키 칸 위치·색·글자 재설정, `RemoveAll` 람다 할당, 판정 문구 문자열 매 프레임 생성 | 화면 크기·설정이 바뀔 때만 재설정, 판정 문구는 새 판정일 때만, 키 칸은 누름 상태가 바뀐 칸만 |
+| B9 | `CustomCharts.Sanitize` | 글자마다 `Path.GetInvalidFileNameChars()` 새 배열 | 정적 집합 |
+| B10 | `IsCustomId` | 문화권 의존 `StartsWith` | `Ordinal` |
+
+### 람다(컴파일러 생성) 판별: 멤버 모양 신호 (`InteropNames`)
+
+인터롭은 컴파일러가 만든 필드를 같은 이름의 프로퍼티로 내보낸다(실측 빈도: `__N__N_N` 1886, `__u__N` 1174, `__1__state` 1097, `__t__builder` 931, `__4__this` 884, `__9` 735 …). 타입 이름 규칙(`ValueTypeCompilerGenerated…` 같은 합성 이름)이나 `ObfuscatedName` 속성이 업데이트로 바뀌어도 필드 모양은 C# 컴파일러가 정하므로 4번째 신호로 추가했다.
+
+**실측 (`tools/interop-harness`, 인터롭 155개 어셈블리 30,509개 타입, 정답 2,834개):**
+
+| 신호 | 누락 | 오탐 |
+|---|---|---|
+| 이름 패턴 단독 | 0 | 0 |
+| 멤버 모양 단독 | 861 (상태 머신 1096/1141, 람다 캐시 735/889, 클로저 141/658 판별) | 0 |
+| 이름 패턴 + 멤버 모양 (속성 없이) | 0 | 0 |
+| 전체 | 0 | 0 |
+
+- 2차 감사의 정답 기준(`ObfuscatedName`의 `<`)은 인터롭이 이름을 바꾸지 않고 `<`를 그대로 둔 UnityEngine 모듈 타입 281개를 빠뜨렸다. 정답에 넣고, `<` 검사를 이름 패턴 신호로 옮겼다.
+- 메서드 이름 패턴의 숫자 꼬리를 여러 개 허용(`_b__8_0_0` 같은 인터롭 오버로드 접미사 대비). 람다 메서드 Unity.Addressables 47/47, Il2CppPlatinaLab.Main 653/653.
+- 메서드 판별 결과도 캐시.
+- Locate 엄격 조건 3건 그대로.
+
+### 리팩토링 감사
+
+| 항목 | 상태 |
+|---|---|
+| SongInfo 판정 훅 5종의 같은 조건 복붙 | **수정.** `IsCustomSong` |
+| 곡/차트 조회 선형 탐색 3종 | **수정.** 사전 |
+| 일반 곡 훅의 격리 방식이 훅마다 달랐음 | **수정.** `HookGuard` 한 곳 |
+| `Diag_Exit`가 진단이 아니라 나가기 상태 정리 담당 | **수정.** `PlayDirector_Exit_Patch`로 이름 변경 |
+| `SetPatternDataToPlay` 로그 "커스텀 차트 주입 대기 지점"(옛 계획) | **수정.** 커스텀/일반 곡만 표시 |
+| 클리어 연출 보류 로그가 게임 실행 후 첫 곡에만 | **수정.** 곡(PatternPlayer)마다 |
+| `PlayOverlay.cs`(판정바+키뷰어 약 600줄) 분리 | 보류. 동작 변화 없이 diff만 커지고, 다음에 둘 중 하나를 크게 고칠 때 나누는 편이 낫다 |
+| `Diag_TrySave`/`Diag_APIServerError`/`Diag_IsScorable` | 유지. 결과 화면·오토 플레이 디버깅용, 호출 빈도 낮음 |
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
-3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `필수 패치 정상`, Locate 건수 경고. `[KeyRedirect]`의 패치 목록과 `완화 조건` 경고, `Failed to HarmonyInit PatchAll`도 검색한다.
+3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `Failed to HarmonyInit PatchAll`도 검색한다.
+   - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요): 컴파일러 생성 판별 누락·오탐 0과 Locate 엄격 조건 3건이 유지되는지 본다.
 4. 검증 기준 빌드를 `ModHealth.TestedBuildId`에 갱신한다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

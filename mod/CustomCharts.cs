@@ -109,11 +109,14 @@ internal static class CustomCharts
         }
     }
 
+    // Path.GetInvalidFileNameChars()는 호출마다 새 배열을 만든다 → 한 번만 받아 둔다
+    private static readonly HashSet<char> s_invalidFileNameChars = new(Path.GetInvalidFileNameChars());
+
     private static string Sanitize(string s)
     {
         var sb = new StringBuilder(s.Length);
         foreach (var c in s)
-            sb.Append(Path.GetInvalidFileNameChars().Contains(c) ? '_' : c);
+            sb.Append(s_invalidFileNameChars.Contains(c) ? '_' : c);
         return sb.ToString();
     }
 
@@ -154,12 +157,18 @@ internal static class CustomCharts
     public static Il2CppSystem.IO.Stream Process(string key, Il2CppSystem.IO.Stream original)
     {
         if (original == null) return original;
+        var song = CustomSongs.ByKey(key);
+
+        // 일반 곡: 덤프도 꺼져 있고 교체할 커스텀 차트도 없으면 원본 스트림을 그대로 돌려준다.
+        // 예전에는 모든 곡의 차트 JSON을 통째로 읽어 관리 배열로 복사한 뒤 새 MemoryStream으로 다시 감쌌다.
+        if (song == null && !DumpEnabled && (key == null || !File.Exists(Path.Combine(CustomDir, key + ".json"))))
+            return original;
+
         byte[] bytes = ReadAll(original);
 
         var name = key ?? $"unknown_{bytes.Length}";
         var customPath = Path.Combine(CustomDir, name + ".json");
 
-        var song = CustomSongs.ByKey(key);
         if (song != null)
         {
             // hwa\ 곡 폴더: BMS가 있으면 변환(핫리로드 지원 + 캐싱), JSON보다 우선

@@ -66,7 +66,7 @@ internal static class PlayAssist
         Core.Log.Msg($"[AutoPlay] 켬 (원래 Extra={s_savedExtra})");
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSettingHelper.IsScorable")]
     private static bool ReadIsScorable() => Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper.IsScorable();
 
     public static void RestoreAutoPlay()
@@ -107,30 +107,51 @@ internal static class PlayAssist
     [HarmonyPatch(typeof(InGameSettingManager), nameof(InGameSettingManager.Save))]
     private static class InGameSettingManager_Save_Patch
     {
-        private static void Prefix(InGameSettingManager __instance)
+        private const string Hook = "InGameSettingManager.Save";
+
+        // 설정 저장은 오토 플레이와 무관하게 늘 불린다 → 게임 멤버 접근은 별도 메서드로 격리 (HookGuard 설명 참고)
+        private static void Prefix(InGameSettingManager __instance) => Set(__instance, s_savedExtra);
+
+        private static void Postfix(InGameSettingManager __instance) => Set(__instance, s_autoPlayValue);
+
+        private static void Set(InGameSettingManager manager, InGameSettingType.Extra value)
         {
-            if (s_overriding) __instance?.Extra?.SetExtra(s_savedExtra);
+            if (!s_overriding || manager == null || HookGuard.IsDisabled(Hook)) return;
+            try { SetExtraDirect(manager, value); }
+            catch (Exception e) { HookGuard.Fail(Hook, e); }
         }
 
-        private static void Postfix(InGameSettingManager __instance)
-        {
-            if (s_overriding) __instance?.Extra?.SetExtra(s_autoPlayValue);
-        }
+        [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSettingManager.Save")]
+        private static void SetExtraDirect(InGameSettingManager manager, InGameSettingType.Extra value) => manager.Extra?.SetExtra(value);
     }
 
     [HarmonyPatch(typeof(PatternPlayer), nameof(PatternPlayer.ProcessJudgeResult))]
     private static class PatternPlayer_ProcessJudgeResult_Patch
     {
+        private const string Hook = "PatternPlayer.ProcessJudgeResult";
         private static int s_logged;
         private static bool s_setFailureLogged;
 
+        /// <summary>
+        /// 노트마다 게임 루프 스레드에서 불린다. 판정바도 올 퍼펙트도 꺼져 있으면 아무것도 읽지 않는다
+        /// (예전에는 판정바를 꺼도 판정을 모아 두기만 하고 비우지 않았다).
+        /// </summary>
         private static void Prefix(JudgeResult judgeResult)
         {
-            try
+            bool bar = PlayOverlay.InPlay && ModConfig.EnableJudgmentBar;
+            bool allPerfect = AllPerfectActive;
+            if ((!bar && !allPerfect) || judgeResult == null || HookGuard.IsDisabled(Hook)) return;
+            try { Handle(judgeResult, bar, allPerfect); }
+            catch (Exception e) { HookGuard.Fail(Hook, e); }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternPlayer.ProcessJudgeResult")]
+        private static void Handle(JudgeResult judgeResult, bool bar, bool allPerfect)
+        {
+            var judgment = judgeResult.Judgment;
+            if (bar)
             {
-                if (judgeResult == null) return;
                 var id = judgeResult.Id;
-                var judgment = judgeResult.Judgment;
                 // 타이밍이 있는 판정만 판정바에 (미스·롱노트 끝 처리는 오차 의미 없음)
                 if ((id == JudgeResult.IdType.ProcessShortNote || id == JudgeResult.IdType.StartProcessingLongNote)
                     && judgment != JudgmentType.Miss && judgment != JudgmentType.Undefined)
@@ -143,18 +164,32 @@ internal static class PlayAssist
                     }
                     PlayOverlay.RegisterHit(error, judgment);
                 }
-                if (AllPerfectActive && judgment != JudgmentType.PerfectHigh && judgment != JudgmentType.Undefined)
-                {
-                    try { judgeResult.Judgment = JudgmentType.PerfectHigh; } catch { }
-                    if (!UpdateResilience.SafeSetFieldOrProperty(judgeResult, "Judgment", JudgmentType.PerfectHigh) && !s_setFailureLogged)
-                    {
-                        s_setFailureLogged = true;
-                        Core.Log.Warning("[PlayAssist] 올 퍼펙트: JudgeResult.Judgment 설정 실패");
-                    }
-                }
             }
-            catch (Exception e) { Core.Log.Warning($"[PlayAssist] 판정 처리 오류: {e.Message}"); }
+            if (allPerfect && judgment != JudgmentType.PerfectHigh && judgment != JudgmentType.Undefined)
+                ForcePerfect(judgeResult);
         }
+
+        /// <summary>
+        /// 1차: 프로퍼티 세터 직접 호출. 2차(세터가 없어졌거나 실패): 이름 기반 리플렉션.
+        /// 예전에는 노트마다 두 경로를 모두 실행했다 (같은 세터를 두 번 호출, 리플렉션 비용).
+        /// </summary>
+        private static void ForcePerfect(JudgeResult judgeResult)
+        {
+            try
+            {
+                SetPerfectDirect(judgeResult);
+                return;
+            }
+            catch { /* 리플렉션 폴백 */ }
+            if (!UpdateResilience.SafeSetFieldOrProperty(judgeResult, "Judgment", JudgmentType.PerfectHigh) && !s_setFailureLogged)
+            {
+                s_setFailureLogged = true;
+                Core.Log.Warning("[PlayAssist] 올 퍼펙트: JudgeResult.Judgment 설정 실패");
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void SetPerfectDirect(JudgeResult judgeResult) => judgeResult.Judgment = JudgmentType.PerfectHigh;
     }
 
     [HarmonyPatch(typeof(PatternPlayer), nameof(PatternPlayer.ProcessTickResult))]

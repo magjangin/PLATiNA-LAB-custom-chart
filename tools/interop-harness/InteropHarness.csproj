@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 오프라인 점검: 게임 실행 없이 MelonLoader 인터롭 어셈블리로 InteropNames(람다/컴파일러 생성 판별)와 Locate 탐색을 검증 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\mod\InteropNames.cs" Link="InteropNames.cs" />
+  </ItemGroup>
+</Project>
