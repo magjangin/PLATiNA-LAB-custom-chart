@@ -1,5 +1,5 @@
 using System.Buffers.Binary;
-using System.Text;
+using System.Collections.Concurrent;
 
 namespace PLATiNALAB.Mod;
 
@@ -9,8 +9,34 @@ namespace PLATiNALAB.Mod;
 /// </summary>
 internal static class MediaDuration
 {
+    private const int MaxCache = 64;
+    private static readonly ConcurrentDictionary<string, (long Ticks, double? Duration)> s_cache = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Ogg Vorbis: 마지막 페이지의 granule position / 식별 헤더의 샘플레이트. 대용량 파일 전체 로드 없이 스트림 앞/뒤만 읽는다.</summary>
-    public static double? Ogg(string path)
+    public static double? Ogg(string path) => Cached("ogg", path, ReadOgg);
+
+    /// <summary>MP4: moov/mvhd 박스의 duration / timescale.</summary>
+    public static double? Mp4(string path) => Cached("mp4", path, ReadMp4);
+
+    private static double? Cached(string kind, string path, Func<string, double?> reader)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        long ticks = 0;
+        try { ticks = File.GetLastWriteTimeUtc(path).Ticks; } catch { }
+        var key = $"{kind}:{path}";
+        if (ticks != 0 && s_cache.TryGetValue(key, out var cached) && cached.Ticks == ticks)
+            return cached.Duration;
+
+        var dur = reader(path);
+        if (ticks != 0)
+        {
+            if (s_cache.Count >= MaxCache && !s_cache.ContainsKey(key)) s_cache.Clear();
+            s_cache[key] = (ticks, dur);
+        }
+        return dur;
+    }
+
+    private static double? ReadOgg(string path)
     {
         try
         {
@@ -22,7 +48,7 @@ internal static class MediaDuration
             int headSize = (int)Math.Min(8192, fileLen);
             var headBuf = new byte[headSize];
             ReadFully(fs, headBuf, 0, headSize);
-            var vorbis = IndexOf(headBuf, Encoding.ASCII.GetBytes("\u0001vorbis"), 0);
+            int vorbis = headBuf.AsSpan(0, headSize).IndexOf("\u0001vorbis"u8);
             if (vorbis < 0 || vorbis + 16 > headSize) return null;
             uint rate = BinaryPrimitives.ReadUInt32LittleEndian(headBuf.AsSpan(vorbis + 12));
             if (rate == 0) return null;
@@ -33,11 +59,12 @@ internal static class MediaDuration
             var tailBuf = new byte[tailSize];
             ReadFully(fs, tailBuf, 0, tailSize);
 
-            var oggS = Encoding.ASCII.GetBytes("OggS");
+            var tail = tailBuf.AsSpan(0, tailSize);
+            var oggS = "OggS"u8;
             for (int i = tailSize - 27; i >= 0; i--)
             {
-                if (tailBuf[i] != 'O' || !tailBuf.AsSpan(i, 4).SequenceEqual(oggS)) continue;
-                long granule = BinaryPrimitives.ReadInt64LittleEndian(tailBuf.AsSpan(i + 6));
+                if (tail[i] != (byte)'O' || !tail.Slice(i, 4).SequenceEqual(oggS)) continue;
+                long granule = BinaryPrimitives.ReadInt64LittleEndian(tail.Slice(i + 6));
                 if (granule > 0) return granule / (double)rate;
             }
         }
@@ -45,15 +72,14 @@ internal static class MediaDuration
         return null;
     }
 
-    /// <summary>MP4: moov/mvhd 박스의 duration / timescale.</summary>
-    public static double? Mp4(string path)
+    private static double? ReadMp4(string path)
     {
         try
         {
             using var fs = File.OpenRead(path);
-            var moov = FindBox(fs, 0, fs.Length, "moov");
+            var moov = FindBox(fs, 0, fs.Length, "moov"u8);
             if (moov == null) return null;
-            var mvhd = FindBox(fs, moov.Value.start, moov.Value.end, "mvhd");
+            var mvhd = FindBox(fs, moov.Value.start, moov.Value.end, "mvhd"u8);
             if (mvhd == null) return null;
             fs.Position = mvhd.Value.start;
             var buf = new byte[32];
@@ -76,7 +102,7 @@ internal static class MediaDuration
     }
 
     /// <summary>[from, to) 범위에서 박스를 찾아 내용 범위(헤더 제외)를 돌려준다.</summary>
-    private static (long start, long end)? FindBox(FileStream fs, long from, long to, string type)
+    private static (long start, long end)? FindBox(FileStream fs, long from, long to, ReadOnlySpan<byte> type)
     {
         var header = new byte[16];
         long pos = from;
@@ -94,7 +120,7 @@ internal static class MediaDuration
             }
             else if (size == 0) size = to - pos;
             if (size < headerSize) return null;
-            if (Encoding.ASCII.GetString(header, 4, 4) == type) return (pos + headerSize, pos + size);
+            if (header.AsSpan(4, 4).SequenceEqual(type)) return (pos + headerSize, pos + size);
             pos += size;
         }
         return null;
@@ -110,12 +136,5 @@ internal static class MediaDuration
             offset += n;
             count -= n;
         }
-    }
-
-    private static int IndexOf(byte[] data, byte[] pattern, int start)
-    {
-        for (int i = start; i <= data.Length - pattern.Length; i++)
-            if (data.AsSpan(i, pattern.Length).SequenceEqual(pattern)) return i;
-        return -1;
     }
 }

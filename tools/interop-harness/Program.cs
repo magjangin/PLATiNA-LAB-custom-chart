@@ -1,8 +1,8 @@
 // 오프라인 인터롭 하네스 — 게임을 실행하지 않고 MelonLoader가 만든 인터롭 어셈블리로 검증한다.
-//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수
+//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수, 모드 [Guarded]/[HarmonyPatch] 검증
 //   dotnet run -c Release -- explore : 컴파일러 생성 타입의 멤버(프로퍼티) 이름 빈도 (멤버 모양 신호 조사용)
 // 정답 기준: 인터롭 [ObfuscatedName]의 원래 이름(마지막 중첩 이름)에 '<'가 있거나, 이름에 '<'가 그대로 남은 타입.
-// 게임 경로는 환경 변수 PLATINALAB_GAME으로 바꿀 수 있다. 게임 업데이트 후 MelonLoader가 인터롭을 다시 만들면 실행한다.
+// 게임 경로는 환경 변수 PLATINALAB_GAME, 모드 DLL 경로는 PLATINALAB_MOD로 바꿀 수 있다.
 global using System.Runtime.CompilerServices;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -16,7 +16,7 @@ static class P
     static readonly string Game = Environment.GetEnvironmentVariable("PLATINALAB_GAME") ?? @"H:\steam\steamapps\common\PLATiNA LAB";
     static readonly string Interop = Path.Combine(Game, "MelonLoader", "Il2CppAssemblies");
     static readonly string Net6 = Path.Combine(Game, "MelonLoader", "net6");
-    static void Main(string[] args)
+    static int Main(string[] args)
     {
         AssemblyLoadContext.Default.Resolving += (ctx, name) =>
         {
@@ -28,8 +28,9 @@ static class P
             return null;
         };
         var asms = Directory.GetFiles(Interop, "*.dll").Select(f => { try { return AssemblyLoadContext.Default.LoadFromAssemblyPath(f); } catch { return null; } }).Where(a => a != null).ToList();
-        if (args.Length > 0 && args[0] == "explore") { Explore(asms); return; }
+        if (args.Length > 0 && args[0] == "explore") { Explore(asms); return 0; }
         Evaluate(asms);
+        return VerifyModAssembly() ? 0 : 1;
     }
 
     static string Last(string original) { int plus = original.LastIndexOf('+'); return plus >= 0 ? original[(plus + 1)..] : original; }
@@ -132,5 +133,139 @@ static class P
             }
         }
         Console.WriteLine($"Locate 엄격 조건 {found.Count}건 (컴파일러 생성 제외 {skipped}): {string.Join(", ", found)}");
+    }
+
+    static string FindModDll()
+    {
+        var env = Environment.GetEnvironmentVariable("PLATINALAB_MOD");
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
+
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var candidates = new[]
+        {
+            Path.Combine(repoRoot, "mod", "bin", "Release", "net6.0", "PLATiNALAB.Mod.dll"),
+            Path.Combine(repoRoot, "mod", "bin", "Debug", "net6.0", "PLATiNALAB.Mod.dll"),
+            Path.Combine(Game, "Mods", "PLATiNALAB.Mod.dll"),
+        };
+        return candidates.Where(File.Exists).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+    }
+
+    static bool VerifyModAssembly()
+    {
+        var modPath = FindModDll();
+        if (modPath == null)
+        {
+            Console.WriteLine("모드 DLL 없음 — [Guarded]/[HarmonyPatch] 검증 건너뜀");
+            return true;
+        }
+        Console.WriteLine($"모드 검증 대상: {modPath}");
+        var modAsm = AssemblyLoadContext.Default.LoadFromAssemblyPath(modPath);
+
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        int guardedCount = 0, guardedFailed = 0;
+        int patchCount = 0, patchFailed = 0;
+
+        foreach (var type in InteropNames.SafeGetTypes(modAsm))
+        {
+            foreach (var data in type.GetCustomAttributesData())
+            {
+                if (data.AttributeType.Name != "HarmonyPatch" && data.AttributeType.Name != "HarmonyPatchAttribute") continue;
+                patchCount++;
+                if (!VerifyHarmonyPatch(type, data, out var error))
+                {
+                    patchFailed++;
+                    Console.WriteLine($"   [FAIL HarmonyPatch] {type.FullName}: {error}");
+                }
+            }
+
+            MethodInfo[] methods;
+            try { methods = type.GetMethods(flags); } catch { continue; }
+            foreach (var m in methods)
+            {
+                string hook = null;
+                foreach (var data in m.GetCustomAttributesData())
+                {
+                    if (data.AttributeType.Name == "GuardedAttribute" && data.ConstructorArguments.Count > 0)
+                    {
+                        hook = data.ConstructorArguments[0].Value as string;
+                        break;
+                    }
+                }
+                if (hook == null || m.ContainsGenericParameters) continue;
+                guardedCount++;
+                try { RuntimeHelpers.PrepareMethod(m.MethodHandle); }
+                catch (Exception e)
+                {
+                    guardedFailed++;
+                    Console.WriteLine($"   [FAIL Guarded] {type.FullName}.{m.Name} ({hook}): {e.GetType().Name}: {e.Message}");
+                }
+            }
+        }
+
+        Console.WriteLine($"[Guarded] 사전 JIT 검증: {guardedCount}개 중 실패 {guardedFailed}개");
+        Console.WriteLine($"[HarmonyPatch] 타깃 존재 검증: {patchCount}개 중 실패 {patchFailed}개");
+        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0;
+    }
+
+    static bool VerifyHarmonyPatch(Type patchClass, CustomAttributeData data, out string error)
+    {
+        Type targetType = null;
+        string methodName = null;
+        int? methodType = null;
+        Type[] argTypes = null;
+
+        foreach (var arg in data.ConstructorArguments)
+        {
+            if (arg.Value is Type t) targetType = t;
+            else if (arg.Value is string s) methodName = s;
+            else if (arg.ArgumentType.IsEnum && arg.Value is int mt) methodType = mt;
+            else if (arg.Value is IReadOnlyCollection<CustomAttributeTypedArgument> arr)
+                argTypes = arr.Select(x => x.Value as Type).ToArray();
+        }
+        foreach (var named in data.NamedArguments)
+        {
+            if (named.MemberName == "declaringType" && named.TypedValue.Value is Type dt) targetType = dt;
+            else if (named.MemberName == "methodName" && named.TypedValue.Value is string mn) methodName = mn;
+            else if (named.MemberName == "methodType" && named.TypedValue.Value is int mt) methodType = mt;
+            else if (named.MemberName == "argumentTypes" && named.TypedValue.Value is IReadOnlyCollection<CustomAttributeTypedArgument> arr)
+                argTypes = arr.Select(x => x.Value as Type).ToArray();
+        }
+
+        if (targetType == null || string.IsNullOrEmpty(methodName))
+        {
+            error = "대상 타입 또는 메서드 이름이 비어 있음";
+            return false;
+        }
+
+        const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        if (methodType == 1) // Getter
+        {
+            var prop = targetType.GetProperty(methodName, any);
+            if (prop?.GetGetMethod(true) != null || targetType.GetMethod("get_" + methodName, any) != null)
+            { error = null; return true; }
+            error = $"{targetType.FullName}.{methodName} (Getter) 없음";
+            return false;
+        }
+        if (methodType == 2) // Setter
+        {
+            var prop = targetType.GetProperty(methodName, any);
+            if (prop?.GetSetMethod(true) != null || targetType.GetMethod("set_" + methodName, any) != null)
+            { error = null; return true; }
+            error = $"{targetType.FullName}.{methodName} (Setter) 없음";
+            return false;
+        }
+        if (argTypes != null)
+        {
+            var m = targetType.GetMethod(methodName, any, null, argTypes, null);
+            if (m != null) { error = null; return true; }
+            error = $"{targetType.FullName}.{methodName}({string.Join(", ", argTypes.Select(t => t?.Name ?? "?"))}) 없음";
+            return false;
+        }
+        var matches = targetType.GetMethods(any).Where(m => m.Name == methodName).ToArray();
+        if (matches.Length == 1) { error = null; return true; }
+        error = matches.Length == 0
+            ? $"{targetType.FullName}.{methodName} 없음"
+            : $"{targetType.FullName}.{methodName} 오버로드 {matches.Length}개 (AmbiguousMatch 위험)";
+        return false;
     }
 }

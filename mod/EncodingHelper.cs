@@ -33,8 +33,11 @@ internal static class EncodingHelper
         {
             var bytes = File.ReadAllBytes(path);
             var encoding = DetectEncoding(bytes);
-            var text = encoding.GetString(bytes);
-            return text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            using var ms = new MemoryStream(bytes, writable: false);
+            using var reader = new StreamReader(ms, encoding, detectEncodingFromByteOrderMarks: true);
+            var lines = new List<string>();
+            while (reader.ReadLine() is { } line) lines.Add(line);
+            return lines.ToArray();
         }
         catch (Exception e)
         {

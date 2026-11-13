@@ -80,6 +80,7 @@ internal static class InteropNames
 
     private static readonly ConcurrentDictionary<Type, bool> s_typeCache = new();
     private static readonly ConcurrentDictionary<MethodBase, bool> s_methodCache = new();
+    private static readonly ConcurrentDictionary<Type, bool> s_il2cppObjectCache = new();
 
     /// <summary>[ObfuscatedName]/[OriginalName]에 남은 원래 이름. 없으면 null.</summary>
     public static string OriginalName(MemberInfo member)
@@ -137,10 +138,19 @@ internal static class InteropNames
     /// <summary>
     /// 타입 자신(감싸는 타입 제외)을 컴파일러 생성으로 판단한 신호. 맞는 신호가 없으면 None.
     /// <paramref name="enabled"/>로 쓸 신호를 고른다 (하네스가 신호별 성능을 잴 때 사용).
+    /// 할당이 없는 NamePattern·Attribute를 먼저 보고, 리플렉션 할당이 있는 OriginalName·MemberShape는 뒤에 본다.
     /// </summary>
     internal static Signals ReasonSelf(Type t, Signals enabled)
     {
         var name = t.Name;
+        if ((enabled & Signals.NamePattern) != 0)
+        {
+            // 인터롭이 이름을 바꾸지 않고 '<'를 그대로 둔 타입도 있다 (실측: UnityEngine 모듈의 <>c, <>c__DisplayClassN_M 등 281개)
+            if (name.IndexOf('<') >= 0) return Signals.NamePattern;
+            foreach (var p in s_typePatterns)
+                if (p.IsMatch(name)) return Signals.NamePattern;
+        }
+        if ((enabled & Signals.Attribute) != 0 && HasCompilerGeneratedAttribute(t)) return Signals.Attribute;
         if ((enabled & Signals.OriginalName) != 0)
         {
             var original = OriginalName(t);
@@ -151,14 +161,6 @@ internal static class InteropNames
                 var last = plus >= 0 ? original[(plus + 1)..] : original;
                 if (last.IndexOf('<') >= 0) return Signals.OriginalName;
             }
-        }
-        if ((enabled & Signals.Attribute) != 0 && HasCompilerGeneratedAttribute(t)) return Signals.Attribute;
-        if ((enabled & Signals.NamePattern) != 0)
-        {
-            // 인터롭이 이름을 바꾸지 않고 '<'를 그대로 둔 타입도 있다 (실측: UnityEngine 모듈의 <>c, <>c__DisplayClassN_M 등 281개)
-            if (name.IndexOf('<') >= 0) return Signals.NamePattern;
-            foreach (var p in s_typePatterns)
-                if (p.IsMatch(name)) return Signals.NamePattern;
         }
         if ((enabled & Signals.MemberShape) != 0 && HasCompilerGeneratedMembers(t)) return Signals.MemberShape;
         return Signals.None;
@@ -211,7 +213,10 @@ internal static class InteropNames
         catch { return false; }
     }
 
-    private static bool DerivesFromIl2CppObject(Type type)
+    private static bool DerivesFromIl2CppObject(Type type) =>
+        s_il2cppObjectCache.GetOrAdd(type, CheckDerivesFromIl2CppObject);
+
+    private static bool CheckDerivesFromIl2CppObject(Type type)
     {
         for (var cur = type; cur != null; cur = cur.BaseType)
             if (cur.FullName == "Il2CppSystem.Object") return true;

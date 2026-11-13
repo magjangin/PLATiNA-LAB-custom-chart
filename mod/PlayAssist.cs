@@ -25,12 +25,14 @@ internal static class PlayAssist
     private static InGameSettingType.Extra s_savedExtra;
     private static InGameSettingType.Extra s_autoPlayValue;
     private const string AutoPlayName = "AutoPlay";
+    private const string AutoPlayHook = "PlayAssist.AutoPlay";
 
     public static bool AllPerfectActive => ModConfig.AllPerfect && CustomSongs.Current != null;
 
     public static void ApplyAutoPlay()
     {
         if (!ModConfig.AutoPlay) { RestoreAutoPlay(); return; }
+        if (HookGuard.IsDisabled(AutoPlayHook)) return;
         // enum 상수는 컴파일 시 숫자로 박히므로, 게임이 값을 재배치해도 맞도록 런타임에 이름으로 찾는다
         if (!Enum.TryParse(AutoPlayName, out InGameSettingType.Extra autoPlay))
         {
@@ -38,15 +40,35 @@ internal static class PlayAssist
             RestoreAutoPlay();
             return;
         }
-        var extra = InGameSettingManager.Instance?.Extra;
-        if (extra == null) { Core.Log.Warning("[AutoPlay] InGameSettingManager 없음"); return; }
-        if (!s_overriding)
+
+        InGameSettingType.Extra currentExtra;
+        try
         {
-            s_savedExtra = extra.Extra;
-            s_overriding = true;
+            if (!TryGetCurrentExtra(out currentExtra))
+            {
+                Core.Log.Warning("[AutoPlay] InGameSettingManager 없음");
+                return;
+            }
         }
+        catch (Exception e)
+        {
+            HookGuard.Fail(AutoPlayHook, e);
+            return;
+        }
+
+        var savedBefore = s_overriding ? s_savedExtra : currentExtra;
         s_autoPlayValue = autoPlay;
-        extra.SetExtra(autoPlay);
+        try
+        {
+            if (!TrySetExtra(autoPlay)) return;
+        }
+        catch (Exception e)
+        {
+            HookGuard.Fail(AutoPlayHook, e);
+            return;
+        }
+        s_savedExtra = savedBefore;
+        s_overriding = true;
 
         // 기록 보호는 게임의 IsScorable()이 맡는다. 기록이 남는 상태거나 확인할 수 없으면 오토 플레이를 쓰지 않는다
         bool scorable;
@@ -66,6 +88,25 @@ internal static class PlayAssist
         Core.Log.Msg($"[AutoPlay] 켬 (원래 Extra={s_savedExtra})");
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(AutoPlayHook)]
+    private static bool TryGetCurrentExtra(out InGameSettingType.Extra current)
+    {
+        current = default;
+        var extra = InGameSettingManager.Instance?.Extra;
+        if (extra == null) return false;
+        current = extra.Extra;
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(AutoPlayHook)]
+    private static bool TrySetExtra(InGameSettingType.Extra value)
+    {
+        var extra = InGameSettingManager.Instance?.Extra;
+        if (extra == null) return false;
+        extra.SetExtra(value);
+        return true;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSettingHelper.IsScorable")]
     private static bool ReadIsScorable() => Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper.IsScorable();
 
@@ -73,10 +114,16 @@ internal static class PlayAssist
     {
         if (!s_overriding) return;
         s_overriding = false;
-        var extra = InGameSettingManager.Instance?.Extra;
-        if (extra == null) return;
-        extra.SetExtra(s_savedExtra);
-        Core.Log.Msg($"[AutoPlay] 끔 → Extra={s_savedExtra}");
+        if (HookGuard.IsDisabled(AutoPlayHook)) return;
+        try
+        {
+            if (TrySetExtra(s_savedExtra))
+                Core.Log.Msg($"[AutoPlay] 끔 → Extra={s_savedExtra}");
+        }
+        catch (Exception e)
+        {
+            HookGuard.Fail(AutoPlayHook, e);
+        }
     }
 
     [HarmonyPatch(typeof(PlayDirector), "Awake")]

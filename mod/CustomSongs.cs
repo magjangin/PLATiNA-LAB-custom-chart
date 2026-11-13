@@ -37,48 +37,28 @@ internal sealed class CustomSong
         "썸네일.jpg", "thumbnail.jpg", "cover.jpg", "jacket.jpg",
     };
 
-    // 커버(CoverManager.GetCoverSprite)·음원(SoundData.FromHEAudioClip) 훅은 호출이 잦아서, 매번 후보 파일을
-    // 최대 12개씩 File.Exists로 확인하면 선곡 화면 스크롤·음원 로딩마다 디스크 I/O가 몰린다.
+    // 커버(CoverManager.GetCoverSprite)·음원(SoundData.FromHEAudioClip)·BMS 탐색 훅은 호출이 잦아서,
+    // 매번 디스크 조회를 반복하면 선곡·플레이 로딩에 디스크 I/O가 몰린다.
     // 확인 결과를 잠깐 기억하고, 곡 시작·미리듣기 때 RefreshMedia로 다시 확인한다 (파일을 추가·교체해도 반영됨).
-    private readonly MediaSlot _music = new(MusicNames), _video = new(VideoNames), _thumbnail = new(ThumbnailNames);
+    private readonly MediaSlot _music, _video, _thumbnail;
 
-    public string MusicPath => _music.Get(this);
-    public string VideoPath => _video.Get(this);
-    public string ThumbnailPath => _thumbnail.Get(this);
+    public CustomSong()
+    {
+        _music = new MediaSlot(() => FirstExisting(MusicNames));
+        _video = new MediaSlot(() => FirstExisting(VideoNames));
+        _thumbnail = new MediaSlot(() => FirstExisting(ThumbnailNames));
+    }
+
+    public string MusicPath => _music.Get();
+    public string VideoPath => _video.Get();
+    public string ThumbnailPath => _thumbnail.Get();
 
     public void RefreshMedia()
     {
         _music.Invalidate();
         _video.Invalidate();
         _thumbnail.Invalidate();
-    }
-
-    private sealed class MediaSlot
-    {
-        private const long TtlMs = 5000;
-        // record는 Nullable 특성을 요구해 이 프로젝트에서 CS0656이 난다 (AGENTS.md Dead End) → 일반 클래스
-        private sealed class Resolved
-        {
-            public readonly string Path;
-            public readonly long At;
-            public Resolved(string path, long at) { Path = path; At = at; }
-        }
-        private readonly string[] _names;
-        private volatile Resolved _resolved; // 여러 스레드(로딩·게임 루프)에서 읽으므로 경로와 시각을 한 객체로 바꿔 끼운다
-
-        public MediaSlot(string[] names) => _names = names;
-
-        public string Get(CustomSong song)
-        {
-            long now = Environment.TickCount64;
-            var r = _resolved;
-            if (r != null && now - r.At < TtlMs) return r.Path;
-            var path = song.FirstExisting(_names);
-            _resolved = new Resolved(path, now);
-            return path;
-        }
-
-        public void Invalidate() => _resolved = null;
+        foreach (var c in Charts) c.InvalidateMedia();
     }
 
     public string FirstExisting(params string[] names)
@@ -169,21 +149,35 @@ internal sealed class CustomSong
         return song;
     }
 
-    public static string NormalizeDifficulty(string d)
+    public static string NormalizeDifficulty(string d) => BmsConverter.NormalizeDifficulty(d);
+}
+
+internal sealed class MediaSlot
+{
+    private const long TtlMs = 5000;
+    // record는 Nullable 특성을 요구해 이 프로젝트에서 CS0656이 난다 (AGENTS.md Dead End) → 일반 클래스
+    private sealed class Resolved
     {
-        if (string.IsNullOrWhiteSpace(d)) return "easy";
-        var lower = d.Trim().ToLowerInvariant();
-        return lower switch
-        {
-            "ez" or "간단" or "简单" or "이지" => "easy",
-            "nm" or "보통" or "普通" or "노멀" => "normal",
-            "hd" or "어려움" or "困难" or "하드" => "hard",
-            "ex" or "expert" or "전문가" or "专家" or "大师" => "over",
-            "sp" or "special" or "진계" or "进阶" or "플러스" => "plus",
-            "test" or "테스트" or "测试" => "testpattern",
-            _ => lower,
-        };
+        public readonly string Path;
+        public readonly long At;
+        public Resolved(string path, long at) { Path = path; At = at; }
     }
+    private readonly Func<string> _resolver;
+    private volatile Resolved _resolved; // 여러 스레드(로딩·게임 루프)에서 읽으므로 경로와 시각을 한 객체로 바꿔 끼운다
+
+    public MediaSlot(Func<string> resolver) => _resolver = resolver;
+
+    public string Get()
+    {
+        long now = Environment.TickCount64;
+        var r = _resolved;
+        if (r != null && now - r.At < TtlMs) return r.Path;
+        var path = _resolver();
+        _resolved = new Resolved(path, now);
+        return path;
+    }
+
+    public void Invalidate() => _resolved = null;
 }
 
 /// <summary>커스텀 곡의 난이도 하나 = 게임 패턴 하나.</summary>
@@ -197,9 +191,17 @@ internal sealed class CustomChart
     public int Level;
     public int PatternIndex;
     public PatternInfo Pattern;
+    private MediaSlot _bms;
 
-    /// <summary>곡 폴더에 BMS가 있으면 이걸 변환해서 쓴다 (JSON보다 우선). 파일명에 난이도가 들어간 BMS → 없으면 첫 BMS.</summary>
-    public string BmsPath => BmsConverter.FindFor(Song.Folder, Difficulty);
+    /// <summary>곡 폴더에 BMS가 있으면 이걸 변환해서 쓴다 (JSON보다 우선). 파일명에 난이도가 들어간 BMS → 없으면 첫 BMS. 5초 캐시 + RefreshMedia로 갱신.</summary>
+    public string BmsPath => (_bms ?? InitBmsSlot()).Get();
+
+    private MediaSlot InitBmsSlot()
+    {
+        Interlocked.CompareExchange(ref _bms, new MediaSlot(() => BmsConverter.FindFor(Song.Folder, Difficulty)), null);
+        return _bms;
+    }
+    public void InvalidateMedia() => _bms?.Invalidate();
     /// <summary>BMS가 없을 때: chart_{난이도}.json 우선, 없으면 chart.json. 둘 다 없으면 chart_{난이도}.json으로 템플릿을 만든다.</summary>
     public string ChartPath => Song.FirstExisting($"chart_{Difficulty}.json", "chart.json") ?? Path.Combine(Song.Folder, $"chart_{Difficulty}.json");
     public string Key => $"{Song.Id}_{Difficulty}";
@@ -327,6 +329,7 @@ internal static class CustomSongs
             Core.Log.Msg($"[CustomSongs] {s.Id} '{s.Title}' ({Path.GetFileName(s.Folder)}) music={s.MusicPath != null} video={s.VideoPath != null} cover={s.ThumbnailPath != null} charts=[{string.Join(", ", s.Charts.Select(c => $"{c.Difficulty}:{c.Level}{(c.BmsPath != null ? $"(BMS {Path.GetFileName(c.BmsPath)})" : File.Exists(c.ChartPath) ? "" : "(템플릿)")}"))}]");
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.Inject", required: true)]
     public static void Inject()
     {
         if (!ModHealth.CustomSongsAllowed) return;
@@ -352,8 +355,7 @@ internal static class CustomSongs
             var path = p.FilePath;
             if (path == null || Path.GetFileNameWithoutExtension(path.Replace('\\', '/')) != BasePatternKey) continue;
             fallback ??= p;
-            var s = p.FindSongInfo();
-            if (s != null && s.LockTypeString == "none" && s.ESDProduct == "default")
+            if (IsPreferredBaseSong(p))
             {
                 basePattern = p;
                 break;
@@ -371,9 +373,7 @@ internal static class CustomSongs
 
         // 난이도 문자열은 _difficultyTypeInfos에 있는 키여야 한다. 없는 키(실측: "normal")를 쓰면
         // 선곡 화면 로딩 중 "DifficultyTypeInfo is not available" 예외로 ACCESSING 화면에서 멈춘다.
-        var validDifficulties = new List<string>();
-        if (mgr._difficultyTypeInfos != null)
-            foreach (var kv in mgr._difficultyTypeInfos) validDifficulties.Add(kv.Key);
+        var validDifficulties = ReadValidDifficulties(mgr);
         Core.Log.Msg($"[CustomSongs] 게임 난이도 키: {string.Join(", ", validDifficulties)}");
         foreach (var custom in All)
         {
@@ -392,23 +392,10 @@ internal static class CustomSongs
             }
         }
 
-        var metas = mgr._songMetaData;
-        SongMetaDataInfo baseMeta = metas != null && metas.ContainsKey(baseSong.Id) ? metas[baseSong.Id] : null;
-
         foreach (var custom in All)
         {
             // 곡 ID로 조회하는 사전(_songMetaData)에 먼저 등록해야 IsHiddenFromDefaultList 등이 예외 없이 동작한다
-            if (metas != null && !metas.ContainsKey(custom.Id))
-            {
-                var meta = new SongMetaDataInfo();
-                if (baseMeta != null) { meta.Genre = baseMeta.Genre; meta.LicensedBy = baseMeta.LicensedBy; }
-                meta.Id = custom.Id;
-                meta.Title = custom.Title;
-                meta.Artist = custom.Artist;
-                meta.Composer = custom.Artist;
-                meta.BPM = custom.Bpm ?? baseMeta?.BPM;
-                metas.Add(custom.Id, meta);
-            }
+            RegisterSongMeta(mgr, custom, baseSong.Id);
 
             var song = new SongInfo(baseSong);
             SetSongField(song, "Id", custom.Id);
@@ -435,10 +422,91 @@ internal static class CustomSongs
                 SetPatternField(pattern, "Difficulty", chart.GameDifficulty);
                 patterns.Add(pattern);
                 chart.Pattern = pattern;
-                Core.Log.Msg($"[CustomSongs] 주입: {custom.Id} '{custom.Title}' {pattern.Difficulty} Lv{chart.Level} (pattern {chart.PatternIndex}, 기반 {source.FilePath}) -> {pattern.FindSongInfo()?.Id ?? "null"}");
+                Core.Log.Msg($"[CustomSongs] 주입: {custom.Id} '{custom.Title}' {chart.GameDifficulty} Lv{chart.Level} (pattern {chart.PatternIndex}, 기반 {source.FilePath}) -> {pattern.FindSongInfo()?.Id ?? "null"}");
             }
         }
         Injected = true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool IsPreferredBaseSong(PatternInfo p)
+    {
+        try
+        {
+            var s = p.FindSongInfo();
+            return s != null && s.LockTypeString == "none" && s.ESDProduct == "default";
+        }
+        catch { return false; }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static List<string> ReadValidDifficulties(SongDataManager mgr)
+    {
+        var valid = new List<string>();
+        try
+        {
+            if (mgr._difficultyTypeInfos != null)
+                foreach (var kv in mgr._difficultyTypeInfos) valid.Add(kv.Key);
+        }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[CustomSongs] _difficultyTypeInfos 읽기 실패, 기본 난이도 목록 사용: {e.Message}");
+        }
+        if (valid.Count == 0) valid.AddRange(new[] { "easy", "hard", "over", "plus", "testpattern" });
+        return valid;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.RegisterSongMeta")]
+    private static void RegisterSongMeta(SongDataManager mgr, CustomSong custom, string baseSongId)
+    {
+        try
+        {
+            var metas = mgr._songMetaData;
+            if (metas == null || metas.ContainsKey(custom.Id)) return;
+            var baseMeta = metas.ContainsKey(baseSongId) ? metas[baseSongId] : null;
+            var meta = new SongMetaDataInfo();
+            PopulateSongMeta(meta, baseMeta, custom);
+            metas.Add(custom.Id, meta);
+        }
+        catch (Exception e)
+        {
+            Core.Log.Warning($"[CustomSongs] _songMetaData 등록 실패 ({custom.Id}): {e.Message}");
+        }
+    }
+
+    private static void PopulateSongMeta(SongMetaDataInfo meta, SongMetaDataInfo baseMeta, CustomSong custom)
+    {
+        try
+        {
+            PopulateSongMetaDirect(meta, baseMeta, custom);
+            return;
+        }
+        catch { /* 리플렉션 폴백 */ }
+
+        UpdateResilience.SafeSetFieldOrProperty(meta, "Id", custom.Id);
+        UpdateResilience.SafeSetFieldOrProperty(meta, "Title", custom.Title);
+        UpdateResilience.SafeSetFieldOrProperty(meta, "Artist", custom.Artist);
+        UpdateResilience.SafeSetFieldOrProperty(meta, "Composer", custom.Artist);
+        string baseBpm = baseMeta != null ? UpdateResilience.SafeGetFieldOrProperty<string>(baseMeta, "BPM") : null;
+        UpdateResilience.SafeSetFieldOrProperty(meta, "BPM", custom.Bpm ?? baseBpm);
+        if (baseMeta != null)
+        {
+            var genre = UpdateResilience.SafeGetFieldOrProperty<string>(baseMeta, "Genre");
+            if (genre != null) UpdateResilience.SafeSetFieldOrProperty(meta, "Genre", genre);
+            var licensed = UpdateResilience.SafeGetFieldOrProperty<string>(baseMeta, "LicensedBy");
+            if (licensed != null) UpdateResilience.SafeSetFieldOrProperty(meta, "LicensedBy", licensed);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.PopulateSongMetaDirect")]
+    private static void PopulateSongMetaDirect(SongMetaDataInfo meta, SongMetaDataInfo baseMeta, CustomSong custom)
+    {
+        if (baseMeta != null) { meta.Genre = baseMeta.Genre; meta.LicensedBy = baseMeta.LicensedBy; }
+        meta.Id = custom.Id;
+        meta.Title = custom.Title;
+        meta.Artist = custom.Artist;
+        meta.Composer = custom.Artist;
+        meta.BPM = custom.Bpm ?? baseMeta?.BPM;
     }
 
     /// <summary>훅에서 Inject를 부를 때의 공통 처리. 바인딩 실패면 주입을 끄고, 그 밖의 예외는 전체 스택을 남긴다.</summary>
@@ -464,7 +532,7 @@ internal static class CustomSongs
         catch (Exception e) { Core.Log.Warning($"[CustomSongs] SongInfo.{propName} 설정 폴백 실패: {e.Message}"); }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.SetSongFieldDirect")]
     private static void SetSongFieldDirect(SongInfo song, string propName, object value)
     {
         switch (propName)
@@ -485,7 +553,7 @@ internal static class CustomSongs
         catch (Exception e) { Core.Log.Warning($"[CustomSongs] PatternInfo.{propName} 설정 폴백 실패: {e.Message}"); }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.SetPatternFieldDirect")]
     private static void SetPatternFieldDirect(PatternInfo pattern, string propName, object value)
     {
         switch (propName)
@@ -513,7 +581,7 @@ internal static class CustomSongs
         root["notes"] = kept;
         // 기반 곡의 HideUI/ShowUI 같은 연출 이벤트는 커스텀 곡에 맞지 않으므로 제거
         root["timeTriggeredEvents"] = new JsonArray();
-        return System.Text.Encoding.UTF8.GetBytes(root.ToJsonString());
+        return System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(root);
     }
 
     /// <summary>
@@ -526,7 +594,22 @@ internal static class CustomSongs
         try
         {
             var root = JsonNode.Parse(custom)!.AsObject();
-            var baseSound = JsonNode.Parse(baseChart)?["bgms"]?.AsArray().FirstOrDefault()?["sound"]?.GetValue<string>();
+            var baseRoot = baseChart != null ? JsonNode.Parse(baseChart) as JsonObject : null;
+            return PrepareChart(root, baseRoot, song);
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"[CustomSongs] PrepareChart JSON 파싱 예외 발생, 원본 차트 폴백: {e.Message}");
+            return custom ?? baseChart ?? Array.Empty<byte>();
+        }
+    }
+
+    /// <summary>이미 파싱된 JsonObject를 재직렬화/재파싱 없이 마무리하고 UTF-8 바이트로 1회 직렬화한다.</summary>
+    public static byte[] PrepareChart(JsonObject root, JsonObject baseRoot, CustomSong song)
+    {
+        try
+        {
+            var baseSound = baseRoot?["bgms"]?.AsArray().FirstOrDefault()?["sound"]?.GetValue<string>();
             var bgms = root["bgms"] as JsonArray;
             if (bgms == null || bgms.Count == 0)
             {
@@ -537,12 +620,12 @@ internal static class CustomSongs
                 foreach (var b in bgms) b!["sound"] = baseSound;
 
             ExtendToMediaLength(root, song);
-            return System.Text.Encoding.UTF8.GetBytes(root.ToJsonString());
+            return System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(root);
         }
         catch (Exception e)
         {
-            Core.Log.Error($"[CustomSongs] PrepareChart JSON 파싱 예외 발생, 원본 차트 폴백: {e.Message}");
-            return custom ?? baseChart ?? Array.Empty<byte>();
+            Core.Log.Error($"[CustomSongs] PrepareChart 처리 예외 발생: {e.Message}");
+            return System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(root);
         }
     }
 
@@ -676,21 +759,40 @@ internal static class SongInfo_IsNewSongMarkTarget_Patch
 [HarmonyPatch(typeof(SongCategoryResourceCollection), nameof(SongCategoryResourceCollection.GetDataSet))]
 internal static class SongCategoryResourceCollection_GetDataSet_Patch
 {
+    private const string Hook = "SongCategoryResourceCollection.GetDataSet";
     private const string DonorKey = "all";
     private const string DisplayedName = "CUSTOM";
     private static SongCategoryResourceDataSet s_dataSet;
 
     private static void Postfix(SongCategoryResourceCollection __instance, string categoryKey, ref SongCategoryResourceDataSet __result)
     {
-        if (__instance == null || categoryKey != CustomSongs.CategoryTag) return;
+        if (__instance == null || categoryKey != CustomSongs.CategoryTag || HookGuard.IsDisabled(Hook)) return;
         try
         {
-            if (s_dataSet == null || s_dataSet.WasCollected) s_dataSet = Create(__instance);
+            if (s_dataSet == null || s_dataSet.WasCollected)
+                s_dataSet = CreateOrFallback(__instance);
             if (s_dataSet != null) __result = s_dataSet;
         }
-        catch (Exception e) { Core.Log.Error($"[CustomSongs] custom 카테고리 리소스 생성 실패: {e}"); }
+        catch (Exception e)
+        {
+            if (!HookGuard.Fail(Hook, e)) Core.Log.Error($"[CustomSongs] custom 카테고리 리소스 생성 실패: {e}");
+        }
     }
 
+    private static SongCategoryResourceDataSet CreateOrFallback(SongCategoryResourceCollection collection)
+    {
+        try
+        {
+            return Create(collection);
+        }
+        catch (Exception e)
+        {
+            HookGuard.Fail("SongCategoryResourceCollection.CreateDirect", e);
+            return CreateFallback(collection);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("SongCategoryResourceCollection.GetDataSet")]
     private static SongCategoryResourceDataSet Create(SongCategoryResourceCollection collection)
     {
         var donor = collection.GetDataSet(DonorKey);
@@ -715,12 +817,50 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
         return ds;
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static SongCategoryResourceDataSet CreateFallback(SongCategoryResourceCollection collection)
+    {
+        var donor = collection.GetDataSet(DonorKey);
+        var ds = UnityEngine.ScriptableObject.CreateInstance(Il2CppType.Of<SongCategoryResourceDataSet>()).Cast<SongCategoryResourceDataSet>();
+        ds.hideFlags = UnityEngine.HideFlags.DontUnloadUnusedAsset;
+        UpdateResilience.SafeSetFieldOrProperty(ds, "categoryKey", CustomSongs.CategoryTag);
+        UpdateResilience.SafeSetFieldOrProperty(ds, "displayedName", DisplayedName);
+        if (donor != null)
+        {
+            foreach (var prop in new[] { "carouselBackground", "detailFocusBackground", "categoryColor" })
+            {
+                var v = UpdateResilience.SafeGetFieldOrProperty<object>(donor, prop);
+                if (v != null) UpdateResilience.SafeSetFieldOrProperty(ds, prop, v);
+            }
+        }
+        const System.Reflection.BindingFlags flags =
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var resType = typeof(CategoryResource);
+        foreach (var p in typeof(SongCategoryResourceDataSet).GetProperties(flags))
+        {
+            if (p.CanWrite && p.PropertyType == resType)
+                try { p.SetValue(ds, TextResource()); } catch { }
+        }
+        foreach (var f in typeof(SongCategoryResourceDataSet).GetFields(flags))
+        {
+            if (f.FieldType == resType)
+                try { f.SetValue(ds, TextResource()); } catch { }
+        }
+        Core.Log.Msg("[CustomSongs] custom 카테고리 리소스 세트 리플렉션 폴백 생성");
+        return ds;
+    }
+
     private static CategoryResource TextResource()
     {
         var r = new CategoryResource();
-        r._resourceRenderType = CategoryResource.RenderType.Text;
+        try { SetTextRenderTypeDirect(r); }
+        catch { UpdateResilience.SafeSetFieldOrProperty(r, "resourceRenderType", CategoryResource.RenderType.Text); }
         return r;
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void SetTextRenderTypeDirect(CategoryResource r) =>
+        r._resourceRenderType = CategoryResource.RenderType.Text;
 }
 
 /// <summary>
@@ -746,8 +886,7 @@ internal static class PatternPlayer_DetermineRunning_HoldEnd_Patch
         catch (Exception e) { HookGuard.Fail(Hook, e); }
     }
 
-    private static void Postfix(Il2CppPlatinaLab.Main.InGame.PatternPlayer __instance, bool __state) => Release(__instance, __state);
-
+    // Harmony는 정상 실행 때도 Postfix와 Finalizer를 모두 부르므로 Finalizer 하나로만 플래그를 복원해 IL2CPP 호출을 절반으로 줄인다.
     private static void Finalizer(Il2CppPlatinaLab.Main.InGame.PatternPlayer __instance, bool __state) => Release(__instance, __state);
 
     private static void Release(Il2CppPlatinaLab.Main.InGame.PatternPlayer player, bool held)

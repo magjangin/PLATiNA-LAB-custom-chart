@@ -26,30 +26,77 @@ internal static class TextSanitizer
         @"[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\s]+",
         RegexOptions.Compiled);
 
+    private static readonly char[] s_specialQuotes = { '’', '‘', '`', '´', '＇' };
+
     /// <summary>
-    /// 문자열의 공백 및 따옴표를 정규화한다.
+    /// 문자열의 공백 및 따옴표를 정규화한다. 정상 문자열은 추가 할당 없이 그대로 돌려준다.
     /// </summary>
     public static string Sanitize(string input)
     {
         if (string.IsNullOrWhiteSpace(input)) return input ?? string.Empty;
 
-        // 1. 유니코드 특수 따옴표를 표준 아포스트로피(')로 통일
-        var text = input
-            .Replace('’', '\'')
-            .Replace('‘', '\'')
-            .Replace('`', '\'')
-            .Replace('´', '\'')
-            .Replace('＇', '\'');
+        var text = input;
 
-        // 2. 영문 축약형 아포스트로피 띄어쓰기 교정 (you'  re -> you're, don ' t -> don't 등)
-        text = s_contractionRegex.Replace(text, "$1'$2");
+        // 1. 유니코드 특수 따옴표가 있을 때만 표준 아포스트로피(')로 통일
+        if (text.IndexOfAny(s_specialQuotes) >= 0)
+        {
+            text = text
+                .Replace('’', '\'')
+                .Replace('‘', '\'')
+                .Replace('`', '\'')
+                .Replace('´', '\'')
+                .Replace('＇', '\'');
+        }
 
-        // 3. 단어 사이 아포스트로피 전후 불필요한 공백 제거
-        text = s_generalApostropheRegex.Replace(text, "$1'$2");
+        // 2~3. 아포스트로피 주변에 공백이 있을 때만 영문 축약형/단어 사이 공백 교정
+        if (HasSpaceAroundApostrophe(text))
+        {
+            text = s_contractionRegex.Replace(text, "$1'$2");
+            text = s_generalApostropheRegex.Replace(text, "$1'$2");
+        }
 
-        // 4. 연속 공백 및 특수 공백을 단일 공백으로 치환
-        text = s_multipleSpacesRegex.Replace(text, " ");
+        // 4. 앞뒤·연속·특수 공백이 있을 때만 정규화
+        if (NeedsSpaceNormalization(text))
+            text = s_multipleSpacesRegex.Replace(text, " ").Trim();
 
-        return text.Trim();
+        return text;
+    }
+
+    private static bool HasSpaceAroundApostrophe(string s)
+    {
+        int idx = 0;
+        while ((idx = s.IndexOf('\'', idx)) >= 0)
+        {
+            if ((idx > 0 && char.IsWhiteSpace(s[idx - 1])) ||
+                (idx + 1 < s.Length && char.IsWhiteSpace(s[idx + 1])))
+                return true;
+            idx++;
+        }
+        return false;
+    }
+
+    private static bool NeedsSpaceNormalization(string s)
+    {
+        if (s.Length == 0) return false;
+        if (char.IsWhiteSpace(s[0]) || char.IsWhiteSpace(s[^1])) return true;
+        bool prevSpace = false;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == ' ')
+            {
+                if (prevSpace) return true;
+                prevSpace = true;
+            }
+            else if (char.IsWhiteSpace(c) || c == '\u200B')
+            {
+                return true;
+            }
+            else
+            {
+                prevSpace = false;
+            }
+        }
+        return false;
     }
 }

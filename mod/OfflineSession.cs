@@ -151,36 +151,31 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// 스냅샷은 Record* 메서드로 직접 채운다 (이전 값 0 → 이번 값).
     /// 직접 생성자 호출은 CreateRecordDirect로 분리했다. 같은 메서드에 두면 시그니처가 바뀔 때 JIT 단계에서 메서드 전체가 실패해 Reflection 폴백에 도달하지 못한다.
     /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("OfflineSession.BuildLocalRecord")]
     private static FreeModePlayRecordV2 BuildLocalRecord(GameEndResult request, PatternInfo patternInfo)
     {
         // SectionDetailPanelController NRE 방지: SectionRecords가 null이면 빈 배열 할당
-        if (request != null && request.SectionRecords == null)
-        {
-            try { request.SectionRecords = new Il2CppReferenceArray<SectionRecord>(0); }
-            catch { }
-        }
+        try { EnsureSectionRecords(request); }
+        catch { }
 
-        var response = new EndGameResponse();
-        response.PlayResult = new PlayResult();
-        response.GrantedItems = new Il2CppReferenceArray<Il2CppPlatinaLab.DataModel.ItemBase>(0);
-        response.UpdatedAchievements = new Il2CppReferenceArray<UserAchievementState>(0);
+        var response = CreateEndGameResponse();
 
-        int finalScore = Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
+        int finalScore = FinalScore(request);
         var snapshot = new GameEndResultSnapShot();
 
         // 서버 응답에 들어 있던 정확도/P.A.T.C.H.를 게임의 계산식으로 직접 구한다 (없으면 결과 화면이 0%, 랭크 C로 나옴)
         int accuracy = 0, mastery = 0;
-        try
+        try { accuracy = ComputeAccuracy(request); }
+        catch (Exception e) { Core.Log.Warning($"[OfflineSession] 정확도 계산 실패 (0으로 진행): {e.Message}"); }
+
+        try { mastery = ComputeMastery(patternInfo, accuracy); }
+        catch (Exception e) { Core.Log.Warning($"[OfflineSession] P.A.T.C.H. 계산 실패 (0으로 진행): {e.Message}"); }
+
+        if (response?.PlayResult != null)
         {
-            ComputeGrade(request, patternInfo, out accuracy, out mastery);
             bool acc = UpdateResilience.SafeSetFieldOrProperty(response.PlayResult, "NormalizedAccuracy", accuracy);
             bool mas = UpdateResilience.SafeSetFieldOrProperty(response.PlayResult, "MasteryNormalized", mastery);
             Core.Log.Msg($"[OfflineSession] 로컬 판정 계산: accuracy={accuracy} mastery={mastery} (PlayResult 설정 acc={acc}, mastery={mas})");
-        }
-        catch (Exception e)
-        {
-            Core.Log.Warning($"[OfflineSession] 정확도/P.A.T.C.H. 계산 실패 (0으로 진행): {e.Message}");
         }
 
         try
@@ -238,6 +233,30 @@ internal static class InGameSurface_SendGameEnd_Patch
         return null;
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("OfflineSession.EnsureSectionRecords")]
+    private static void EnsureSectionRecords(GameEndResult request)
+    {
+        if (request != null && request.SectionRecords == null)
+            request.SectionRecords = new Il2CppReferenceArray<SectionRecord>(0);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("OfflineSession.CreateEndGameResponse")]
+    private static EndGameResponse CreateEndGameResponse()
+    {
+        var response = new EndGameResponse();
+        response.PlayResult = new PlayResult();
+        try { SetEmptyResponseArrays(response); }
+        catch (Exception e) { Core.Log.Warning($"[OfflineSession] EndGameResponse 빈 배열 초기화 실패: {e.Message}"); }
+        return response;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("OfflineSession.ResponseArrays")]
+    private static void SetEmptyResponseArrays(EndGameResponse response)
+    {
+        response.GrantedItems = new Il2CppReferenceArray<Il2CppPlatinaLab.DataModel.ItemBase>(0);
+        response.UpdatedAchievements = new Il2CppReferenceArray<UserAchievementState>(0);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("결과 스냅샷 기록(FillSnapshot)")]
     private static void FillSnapshot(GameEndResultSnapShot snapshot, int finalScore, int accuracy, int mastery)
     {
@@ -250,12 +269,21 @@ internal static class InGameSurface_SendGameEnd_Patch
         snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("정확도/P.A.T.C.H. 계산(ComputeGrade)")]
-    private static void ComputeGrade(GameEndResult request, PatternInfo patternInfo, out int accuracy, out int mastery)
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("정확도 계산(ComputeAccuracy)")]
+    private static int ComputeAccuracy(GameEndResult request) =>
+        Il2CppPlatinaLab.Main.Mastery.Utility.AccuracyV2Formula.GetAccuracyV2(request.Judge, request.WasPaused).Total;
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("P.A.T.C.H. 계산(ComputeMastery)")]
+    private static int ComputeMastery(PatternInfo patternInfo, int accuracy)
     {
-        accuracy = Il2CppPlatinaLab.Main.Mastery.Utility.AccuracyV2Formula.GetAccuracyV2(request.Judge, request.WasPaused).Total;
-        mastery = Il2CppPlatinaLab.Main.Mastery.Utility.MasteryV2Formula.CalcFromPatternInfo(patternInfo, accuracy)._ScaledRawValue_k__BackingField;
+        var m = Il2CppPlatinaLab.Main.Mastery.Utility.MasteryV2Formula.CalcFromPatternInfo(patternInfo, accuracy);
+        try { return ReadMasteryRawDirect(m); }
+        catch { return UpdateResilience.SafeGetFieldOrProperty(m, "ScaledRawValue", 0); }
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int ReadMasteryRawDirect(Il2CppPlatinaLab.Main.Common.Types.Mastery m) =>
+        m._ScaledRawValue_k__BackingField;
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("결과 레코드 직접 생성(CreateRecordDirect)")]
     private static FreeModePlayRecordV2 CreateRecordDirect(GameEndResult request, GameEndResultSnapShot snapshot, EndGameResponse response,

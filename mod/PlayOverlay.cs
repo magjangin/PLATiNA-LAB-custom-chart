@@ -54,6 +54,7 @@ internal static class PlayOverlay
     // ---------------- UI ----------------
     private static GameObject s_root;
     private static Transform s_barGroup, s_keyGroup;
+    private static bool s_rootActive, s_barActive, s_keyActive;
     private static Image s_track, s_center;
     private static readonly Image[] s_ranges = new Image[3];
     private static readonly List<Image> s_ticks = new();
@@ -110,14 +111,17 @@ internal static class PlayOverlay
         {
             bool showBar = InPlay && ModConfig.EnableJudgmentBar;
             bool showKeys = InPlay && ModConfig.EnableKeyViewer;
+            bool showAny = showBar || showKeys;
+            // 비플레이 화면에서는 Unity Object == null 판정(IL2CPP 호출)조차 생략한다
+            if (!showAny && !s_rootActive) return;
             if (s_root == null)
             {
-                if (!showBar && !showKeys) return;
+                if (!showAny) { s_rootActive = s_barActive = s_keyActive = false; return; }
                 Build();
             }
-            s_root.SetActive(showBar || showKeys);
-            s_barGroup.gameObject.SetActive(showBar);
-            s_keyGroup.gameObject.SetActive(showKeys);
+            if (s_rootActive != showAny) { s_root.SetActive(showAny); s_rootActive = showAny; }
+            if (s_barActive != showBar) { s_barGroup.gameObject.SetActive(showBar); s_barActive = showBar; }
+            if (s_keyActive != showKeys) { s_keyGroup.gameObject.SetActive(showKeys); s_keyActive = showKeys; }
             if (showBar) UpdateJudgmentBar();
             if (showKeys) UpdateKeyViewer();
         }
@@ -136,6 +140,9 @@ internal static class PlayOverlay
         canvas.sortingOrder = 30000;
         s_barGroup = Group("JudgmentBar");
         s_keyGroup = Group("KeyViewer");
+        s_rootActive = true;
+        s_barActive = true;
+        s_keyActive = true;
 
         s_track = NewImage(s_barGroup, "Track");
         for (int i = 0; i < s_ranges.Length; i++) s_ranges[i] = NewImage(s_barGroup, $"Range{i}");
@@ -186,30 +193,47 @@ internal static class PlayOverlay
     private static TMP_FontAsset FindFont()
     {
         if (s_font != null && !s_font.WasCollected) return s_font;
-        try { s_font = TMP_Settings.defaultFontAsset; } catch { }
+        s_font = TryGetDefaultFont();
         if ((s_font == null || s_font.WasCollected) && Time.time >= s_nextFontSearchTime)
         {
             s_nextFontSearchTime = Time.time + 3.0f;
-            try
+            // 1. 언어 설정(LocalizeTMPFont) 컴포넌트의 폰트 우선 탐색 (CJK/중국어 글리프 보장)
+            if (!HookGuard.IsDisabled("PlayOverlay.LocalizeTMPFont"))
             {
-                // 1. 언어 설정(LocalizeTMPFont) 컴포넌트의 폰트 우선 탐색 (CJK/중국어 글리프 보장)
-                var loc = UnityEngine.Object.FindObjectOfType<Il2CppPlatinaLab.Main.Common.Font.LocalizeTMPFont>();
-                if (loc != null && loc._text != null && loc._text.font != null)
-                {
-                    s_font = loc._text.font;
-                }
+                try { s_font = TryFindLocalizedFont(); }
+                catch (Exception e) { HookGuard.Fail("PlayOverlay.LocalizeTMPFont", e); }
             }
-            catch { }
 
-            // 2. 일반 텍스트 폰트 폴백
-            if (s_font == null || s_font.WasCollected)
+            // 2. 일반 텍스트 폰트 폴백 (LocalizeTMPFont가 바뀌어 JIT 실패해도 이 폴백에 도달한다)
+            if ((s_font == null || s_font.WasCollected) && !HookGuard.IsDisabled("PlayOverlay.AnyTMPFont"))
             {
-                var any = UnityEngine.Object.FindObjectOfType<TextMeshProUGUI>();
-                if (any != null) s_font = any.font;
+                try { s_font = TryFindAnyTmpFont(); }
+                catch (Exception e) { HookGuard.Fail("PlayOverlay.AnyTMPFont", e); }
             }
             if (s_font == null) WarnOnce("[PlayOverlay] TMP 폰트를 찾지 못함 — 글자가 안 보일 수 있음");
         }
         return s_font;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static TMP_FontAsset TryGetDefaultFont()
+    {
+        try { return TMP_Settings.defaultFontAsset; }
+        catch { return null; }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("PlayOverlay.LocalizeTMPFont")]
+    private static TMP_FontAsset TryFindLocalizedFont()
+    {
+        var loc = UnityEngine.Object.FindObjectOfType<Il2CppPlatinaLab.Main.Common.Font.LocalizeTMPFont>();
+        return loc != null && loc._text != null ? loc._text.font : null;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("PlayOverlay.AnyTMPFont")]
+    private static TMP_FontAsset TryFindAnyTmpFont()
+    {
+        var any = UnityEngine.Object.FindObjectOfType<TextMeshProUGUI>();
+        return any != null ? any.font : null;
     }
 
     /// <summary>왼쪽 위 기준 픽셀 사각형(sxtg2 좌표계)을 캔버스(왼쪽 아래 기준)에 놓는다.</summary>
@@ -230,6 +254,7 @@ internal static class PlayOverlay
 
     // ================= 판정바 =================
 
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("PlayOverlay.LoadRanges")]
     private static unsafe void LoadRanges()
     {
         s_rangeLoaded = true;
@@ -278,7 +303,15 @@ internal static class PlayOverlay
 
     private static void UpdateJudgmentBar()
     {
-        if (!s_rangeLoaded) LoadRanges();
+        if (!s_rangeLoaded)
+        {
+            s_rangeLoaded = true;
+            if (!HookGuard.IsDisabled("PlayOverlay.LoadRanges"))
+            {
+                try { LoadRanges(); }
+                catch (Exception e) { HookGuard.Fail("PlayOverlay.LoadRanges", e); }
+            }
+        }
         float now = Time.time;
         lock (s_lock)
         {
@@ -422,13 +455,23 @@ internal static class PlayOverlay
             var mode = player.LineMode;
             lock (s_keyLock)
             {
-                if (s_laneOfKey == null || s_mode != mode) BindKeys(mode);
+                if (s_laneOfKey == null || s_mode != mode)
+                {
+                    if (HookGuard.IsDisabled("PlayOverlay.BindKeys")) return;
+                    try { BindKeys(mode); }
+                    catch (Exception e)
+                    {
+                        HookGuard.Fail("PlayOverlay.BindKeys", e);
+                        return;
+                    }
+                }
                 if (s_laneOfKey.TryGetValue(input.KeyCode, out var index) && index < s_pressed.Length)
                     s_pressed[index] = input.IsPressed;
             }
         }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("PlayOverlay.BindKeys")]
     private static void BindKeys(LineModeType mode)
     {
         s_mode = mode;

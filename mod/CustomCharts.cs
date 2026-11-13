@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Il2CppPlatinaLab.Main.InGame;
@@ -86,27 +87,60 @@ internal static class CustomCharts
         }
     }
 
-    public static string KeyOf(PatternPlayer player)
+    private const string CustomKeyHook = "PatternParser.Parse.CustomKey";
+    private const string VanillaKeyHook = "PatternParser.Parse.VanillaKey";
+
+    private static bool HasCustomChartFiles()
     {
-        try
+        try { return Directory.Exists(CustomDir) && Directory.EnumerateFiles(CustomDir, "*.json").Any(); }
+        catch { return false; }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(CustomKeyHook, required: true)]
+    private static string TryGetCustomKey(PatternPlayer player) => CustomSongs.Of(player?.PlayPattern)?.Key;
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(VanillaKeyHook)]
+    private static string ReadVanillaKey(PatternPlayer player)
+    {
+        var info = player?.PlayPattern;
+        if (info == null) return null;
+        var raw = info.FilePath;
+        if (string.IsNullOrEmpty(raw)) raw = info.GetPatternFileName();
+        if (string.IsNullOrEmpty(raw)) return null;
+        // 패턴 파일명은 곡마다 고유하지 않다 (실측: 서로 다른 곡이 모두 FourLines_Easy.ppp) → 곡 ID를 붙인다.
+        // 리소스 주소도 Data/Patterns/{songId}/{file} 구조.
+        var file = Path.GetFileNameWithoutExtension(raw.Replace('\\', '/'));
+        return Sanitize($"{info.GroupId}__{file}");
+    }
+
+    public static Il2CppSystem.IO.Stream ProcessPlayer(PatternPlayer player, Il2CppSystem.IO.Stream original)
+    {
+        if (original == null) return original;
+
+        // 커스텀 곡: RequestGameStart에서 설정된 Current를 우선 사용하고, 없을 때만 PlayPattern을 격리 조회
+        string customKey = CustomSongs.Current?.Key;
+        if (customKey == null && CustomSongs.Injected && !HookGuard.IsDisabled(CustomKeyHook))
         {
-            var info = player?.PlayPattern;
-            if (info == null) return null;
-            var custom = CustomSongs.Of(info);
-            if (custom != null) return custom.Key;
-            var raw = info.FilePath;
-            if (string.IsNullOrEmpty(raw)) raw = info.GetPatternFileName();
-            if (string.IsNullOrEmpty(raw)) return null;
-            // 패턴 파일명은 곡마다 고유하지 않다 (실측: 서로 다른 곡이 모두 FourLines_Easy.ppp) → 곡 ID를 붙인다.
-            // 리소스 주소도 Data/Patterns/{songId}/{file} 구조.
-            var file = Path.GetFileNameWithoutExtension(raw.Replace('\\', '/'));
-            return Sanitize($"{info.GroupId}__{file}");
+            try { customKey = TryGetCustomKey(player); }
+            catch (Exception e) { HookGuard.Fail(CustomKeyHook, e, required: true); }
         }
-        catch (Exception e)
+        if (customKey != null)
         {
-            Core.Log.Warning($"[CustomCharts] 패턴 키 조회 실패: {e.Message}");
-            return null;
+            var replaced = Process(customKey, original);
+            ModHealth.Mark("Parse");
+            return replaced;
         }
+
+        // 일반 곡 빠른 경로: 덤프도 꺼져 있고 CustomCharts 폴더에 오버라이드 JSON도 없으면 IL2CPP 문자열 조회 자체를 생략
+        if (!DumpEnabled && !HasCustomChartFiles()) return original;
+
+        string key = null;
+        if (!HookGuard.IsDisabled(VanillaKeyHook))
+        {
+            try { key = ReadVanillaKey(player); }
+            catch (Exception e) { HookGuard.Fail(VanillaKeyHook, e); }
+        }
+        return Process(key, original);
     }
 
     // Path.GetInvalidFileNameChars()는 호출마다 새 배열을 만든다 → 한 번만 받아 둔다
@@ -114,7 +148,7 @@ internal static class CustomCharts
 
     private static string Sanitize(string s)
     {
-        var sb = new StringBuilder(s.Length);
+        var sb = new System.Text.StringBuilder(s.Length);
         foreach (var c in s)
             sb.Append(s_invalidFileNameChars.Contains(c) ? '_' : c);
         return sb.ToString();
@@ -181,9 +215,9 @@ internal static class CustomCharts
                     if (TryGetCache(s_bmsCache, bms, stamp, out var cachedData)) return ToStream(cachedData);
 
                     var music = song.Song.MusicPath != null ? Path.GetFileName(song.Song.MusicPath) : "music.ogg";
-                    var converted = BmsConverter.Convert(BmsConverter.Parse(bms), music, song.Song.Lanes,
-                        System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
-                    var chart = CustomSongs.PrepareChart(Encoding.UTF8.GetBytes(converted.ToJsonString()), bytes, song.Song);
+                    var baseObj = JsonNode.Parse(bytes) as JsonObject;
+                    var converted = BmsConverter.Convert(BmsConverter.Parse(bms), music, song.Song.Lanes, baseObj);
+                    var chart = CustomSongs.PrepareChart(converted, baseObj, song.Song);
                     StoreCache(s_bmsCache, bms, stamp, chart);
                     Core.Log.Msg($"[CustomCharts] 커스텀 곡 BMS 적용: {song.Key} '{song.Song.Title}' ← {Path.GetFileName(bms)} ({chart.Length} bytes)");
                     return ToStream(chart);
@@ -252,14 +286,20 @@ internal static class CustomCharts
 [HarmonyPatch(typeof(PatternParser), nameof(PatternParser.Parse), typeof(PatternPlayer), typeof(Il2CppSystem.IO.Stream))]
 internal static class PatternParser_Parse_PlayerStream_Patch
 {
+    private const string Hook = "PatternParser.Parse(Player,Stream)";
+
     private static void Prefix(PatternPlayer patternPlayer, ref Il2CppSystem.IO.Stream patternStream)
     {
+        if (HookGuard.IsDisabled(Hook)) return;
         try
         {
-            patternStream = CustomCharts.Process(CustomCharts.KeyOf(patternPlayer), patternStream);
-            ModHealth.Mark("Parse");
+            patternStream = CustomCharts.ProcessPlayer(patternPlayer, patternStream);
         }
-        catch (Exception e) { Core.Log.Error($"[CustomCharts] Parse(Player,Stream) 처리 실패: {e}"); }
+        catch (Exception e)
+        {
+            if (!HookGuard.Fail(Hook, e, required: CustomSongs.Current != null))
+                Core.Log.Error($"[CustomCharts] Parse(Player,Stream) 처리 실패: {e}");
+        }
         CustomCharts.Handling = true;
     }
 
@@ -269,13 +309,19 @@ internal static class PatternParser_Parse_PlayerStream_Patch
 [HarmonyPatch(typeof(PatternParser), nameof(PatternParser.Parse), typeof(Il2CppSystem.IO.Stream))]
 internal static class PatternParser_Parse_Stream_Patch
 {
+    private const string Hook = "PatternParser.Parse(Stream)";
+
     private static void Prefix(ref Il2CppSystem.IO.Stream patternStream)
     {
-        if (CustomCharts.Handling) return;
+        if (CustomCharts.Handling || HookGuard.IsDisabled(Hook)) return;
         try
         {
             patternStream = CustomCharts.Process(null, patternStream);
         }
-        catch (Exception e) { Core.Log.Error($"[CustomCharts] Parse(Stream) 처리 실패: {e}"); }
+        catch (Exception e)
+        {
+            if (!HookGuard.Fail(Hook, e))
+                Core.Log.Error($"[CustomCharts] Parse(Stream) 처리 실패: {e}");
+        }
     }
 }

@@ -174,11 +174,39 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 | `PlayOverlay.cs`(판정바+키뷰어 약 600줄) 분리 | 보류. 동작 변화 없이 diff만 커지고, 다음에 둘 중 하나를 크게 고칠 때 나누는 편이 낫다 |
 | `Diag_TrySave`/`Diag_APIServerError`/`Diag_IsScorable` | 유지. 결과 화면·오토 플레이 디버깅용, 호출 빈도 낮음 |
 
+## 4차 (2026-11-14): 전체 파일 리팩토링, 병목 제거, 업데이트 내성 보강
+
+검증: Release/Debug 빌드 경고·오류 0건, 오프라인 하네스(`tools/interop-harness`)에서 컴파일러 생성 판별 누락 0·오탐 0, Locate 엄격 조건 3건, `[Guarded]` 44개 메서드 사전 JIT 준비 실패 0건, `[HarmonyPatch]` 31개 타깃 누락·중복 0건. **인게임 실기 실행은 이 빌드로 미확인.**
+
+### 업데이트 내성 보강
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| R4-1 | `PlayOverlay.FindFont` | `LocalizeTMPFont`와 폴백 `TextMeshProUGUI` 탐색이 한 메서드에 있어 전자 변경 시 폴백 미도달 | `TryFindLocalizedFont`/`TryFindAnyTmpFont`를 `[Guarded]` 별도 `NoInlining` 메서드로 분리 |
+| R4-2 | `OfflineSession.BuildLocalRecord` | `SectionRecords`, `EndGameResponse` 배열, `AccuracyV2Formula`/`MasteryV2Formula`가 혼재 | `EnsureSectionRecords`/`CreateEndGameResponse`/`SetEmptyResponseArrays`/`ComputeAccuracy`/`ComputeMastery`로 분리 + `Mastery` 리플렉션 폴백 |
+| R4-3 | `CustomSongs.Inject`, `GetDataSet` | `Inject` 미표기, `ESDProduct`/`_difficultyTypeInfos`/`_songMetaData`/`_eyeCatchV1` 직접 참조 | `Inject`에 `[Guarded(..., required: true)]`, 선택 필드 헬퍼 분리, `GetDataSet` 리플렉션 `CreateFallback` 추가 |
+| R4-4 | `PlayAssist.ApplyAutoPlay`/`RestoreAutoPlay` | `InGameSettingManager.Instance.Extra` 직접 참조 | `TryGetCurrentExtra`/`TrySetExtra`를 `[Guarded("PlayAssist.AutoPlay")]`로 분리 |
+| R4-5 | `CustomCharts.ProcessPlayer` | `KeyOf`가 `PlayPattern`/`FilePath`/`GroupId`를 한 번에 접근 | `TryGetCustomKey`(required)와 `ReadVanillaKey` 분리, `Parse` 패치 `HookGuard` 적용 |
+| R4-6 | `CustomMedia` | `HEAudioClip` 직접 필드 설정·icall 경로 `Precheck` 누락 | `CreateAudioClip`/`SetClipDataDirect` 분리 + `SafeSetFieldOrProperty` 폴백, `*Icall`에 `[Guarded]` 추가 |
+| R4-7 | `UpdateResilience` | `Type.GetField`/`GetProperty`가 상위 클래스 `private` 백킹 필드를 찾지 못함, 타입 불일치 | `BaseType` 계층 순회 탐색 및 `Convert.ChangeType`/enum 변환 추가 |
+| R4-8 | `tools/interop-harness` | 컴파일러 생성·Locate 외에 모드 DLL의 `[Guarded]`/`[HarmonyPatch]` 검증 없음 | 빌드된 `PLATiNALAB.Mod.dll` 대상 `PrepareMethod` 44개 및 `[HarmonyPatch]` 31개 오프라인 검증 추가 |
+
+### 병목 제거 · 리팩토링
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| P4-1 | `DetermineRunning` 패치 | 정상 실행 시 `Postfix`와 `Finalizer`가 둘 다 `ClearFlag`를 호출해 IL2CPP 쓰기 2배 | `Postfix` 제거, `Finalizer`로만 복원 |
+| P4-2 | `PlayOverlay.Update` | 비플레이 화면에서도 매 프레임 `s_root == null` 및 `SetActive` IL2CPP 호출 | `s_rootActive`/`s_barActive`/`s_keyActive` 캐시로 비플레이 프레임 IL2CPP 호출 0건 |
+| P4-3 | `CustomCharts.Process` | 일반 곡에서 매번 `PlayPattern`/`FilePath`/`GroupId` 조회, BMS 변환 시 JSON 2회 파싱·직렬화 | `!DumpEnabled && !HasCustomChartFiles()` 빠른 경로, `PrepareChart(JsonObject, ...)` 오버로드로 1회 직렬화 |
+| P4-4 | `CustomMedia` | Unity 6 `ReadOnlySpan` 누락으로 `ImageConversion.LoadImage`/`VideoPlayer.url`마다 예외 발생, `s_clips` 상한/핫리로드 없음 | 첫 `MissingMethodException` 후 표준 API 건너뛰기, `HEAudioClip` LRU 상한(8개) 및 파일 수정 시각 핫리로드 |
+| P4-5 | `MediaDuration`, `ModConfig`, `TextSanitizer`, `EncodingHelper` | 매 호출 버퍼 할당, 변경 없는 `config.txt` 재로드, 정상 문자열 Regex 호출, 대용량 문자열 `Split` | 수정 시각 캐시, UTF-8 리터럴(`u8`), `config.txt` 타임스탬프 비교, 빠른 경로, `StreamReader` 라인 읽기 |
+| P4-6 | `BmsConverter`, `CustomSongs`, `InteropNames` | `Convert` 내 `OrderBy` 3회, `BmsPath` 매번 디렉터리 스캔, 난이도 별칭 테이블 중복, `OriginalName` 우선 평가 | `Parse` 끝 1회 정렬, `MediaSlot` 5초 캐시 공용화, 난이도 테이블 일원화, `NamePattern` 우선 및 `DerivesFromIl2CppObject` 캐시 |
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
 3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `Failed to HarmonyInit PatchAll`도 검색한다.
-   - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요): 컴파일러 생성 판별 누락·오탐 0과 Locate 엄격 조건 3건이 유지되는지 본다.
+   - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT 및 `[HarmonyPatch]` 타깃 실패 0을 확인한다.
 4. 검증 기준 빌드를 `ModHealth.TestedBuildId`에 갱신한다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

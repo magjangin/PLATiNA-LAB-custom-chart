@@ -53,6 +53,36 @@ internal static class BmsConverter
     private static readonly string[] DefaultChannelOrder = { "16", "11", "12", "13", "14", "15", "18", "19" };
     private static readonly string[] Extensions = { ".bms", ".bme", ".bml", ".pms" };
 
+    private static readonly Dictionary<string, string[]> DifficultyAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["easy"] = new[] { "ez", "간단", "简单", "이지" },
+        ["normal"] = new[] { "nm", "보통", "普通", "노멀" },
+        ["hard"] = new[] { "hd", "어려움", "困难", "하드" },
+        ["over"] = new[] { "ex", "expert", "전문가", "专家", "大师" },
+        ["plus"] = new[] { "sp", "special", "진계", "进阶", "플러스" },
+        ["testpattern"] = new[] { "test", "테스트", "测试" },
+    };
+
+    private static readonly Dictionary<string, string> AliasToDifficulty = BuildAliasMap();
+
+    private static Dictionary<string, string> BuildAliasMap()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (canonical, aliases) in DifficultyAliases)
+        {
+            map[canonical] = canonical;
+            foreach (var alias in aliases) map[alias] = canonical;
+        }
+        return map;
+    }
+
+    public static string NormalizeDifficulty(string d)
+    {
+        if (string.IsNullOrWhiteSpace(d)) return "easy";
+        var lower = d.Trim().ToLowerInvariant();
+        return AliasToDifficulty.TryGetValue(lower, out var canonical) ? canonical : lower;
+    }
+
     /// <summary>난이도에 쓸 BMS: 파일명에 난이도 이름 또는 별칭(다국어)이 들어간 것 → 없으면 이름순 첫 BMS.</summary>
     public static string FindFor(string folder, string difficulty)
     {
@@ -77,16 +107,11 @@ internal static class BmsConverter
     private static IEnumerable<string> GetDifficultyAliases(string diff)
     {
         yield return diff;
-        var lower = diff.ToLowerInvariant();
-        switch (lower)
-        {
-            case "easy": yield return "ez"; yield return "간단"; yield return "简单"; yield return "이지"; break;
-            case "normal": yield return "nm"; yield return "보통"; yield return "普通"; yield return "노멀"; break;
-            case "hard": yield return "hd"; yield return "어려움"; yield return "困难"; yield return "하드"; break;
-            case "over": yield return "ex"; yield return "expert"; yield return "전문가"; yield return "专家"; yield return "大师"; break;
-            case "plus": yield return "sp"; yield return "special"; yield return "진계"; yield return "进阶"; yield return "플러스"; break;
-            case "testpattern": yield return "test"; yield return "테스트"; yield return "测试"; break;
-        }
+        var canonical = NormalizeDifficulty(diff);
+        if (!string.Equals(canonical, diff, StringComparison.OrdinalIgnoreCase))
+            yield return canonical;
+        if (DifficultyAliases.TryGetValue(canonical, out var aliases))
+            foreach (var alias in aliases) yield return alias;
     }
 
     private static bool IsAllZero(string s)
@@ -140,7 +165,14 @@ internal static class BmsConverter
                 chart.Objects.Add(new BmsObject(measure, channel, (double)i / count, value));
             }
         }
+        chart.Objects.Sort(CompareObjects);
         return chart;
+    }
+
+    private static int CompareObjects(BmsObject a, BmsObject b)
+    {
+        int cmp = a.Position.CompareTo(b.Position);
+        return cmp != 0 ? cmp : string.CompareOrdinal(a.Channel, b.Channel);
     }
 
     /// <summary>
@@ -151,10 +183,12 @@ internal static class BmsConverter
     {
         var log = System.IO.Path.GetFileName(bms.Path);
 
-        // BGM 시작 위치: 곡 음원을 가리키는 오브젝트
+        // BGM 시작 위치: 곡 음원을 가리키는 가장 앞선 오브젝트 (Parse에서 이미 위치순 정렬됨)
         double bgmPosition = 1;
-        var bgm = bms.Objects.Where(o => IsMusic(bms, o.Value, musicFileName)).OrderBy(o => o.Position).ToList();
-        if (bgm.Count > 0) bgmPosition = bgm[0].Position;
+        foreach (var o in bms.Objects)
+        {
+            if (IsMusic(bms, o.Value, musicFileName)) { bgmPosition = o.Position; break; }
+        }
 
         // 레인 채널
         var lanes = laneChannels?.Where(c => c.Length == 2).Select(c => c.ToUpperInvariant()).ToList();
@@ -175,7 +209,7 @@ internal static class BmsConverter
         var lastShort = new Dictionary<string, int>();        // 채널 → 마지막 단노트 인덱스 (LNOBJ)
         int ignored = 0, unpaired = 0;
 
-        foreach (var o in bms.Objects.OrderBy(o => o.Position).ThenBy(o => o.Channel))
+        foreach (var o in bms.Objects)
         {
             if (IsMusic(bms, o.Value, musicFileName)) continue;
             var channel = NoteChannel(o.Channel);
@@ -245,7 +279,7 @@ internal static class BmsConverter
 
         // BPM 변경: 03(16진 정수), 08(#BPMxx 참조)
         var bpms = new JsonObject();
-        foreach (var o in bms.Objects.OrderBy(o => o.Position))
+        foreach (var o in bms.Objects)
         {
             double? bpm = o.Channel == "03" && int.TryParse(o.Value, NumberStyles.HexNumber, null, out var hex) ? hex
                 : o.Channel == "08" && bms.BpmTable.TryGetValue(o.Value, out var t) ? t : null;

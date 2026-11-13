@@ -28,6 +28,8 @@ internal static class ModConfig
 
     public static string FilePath => Path.Combine(MelonEnvironment.GameRootDirectory, "SaveCustomKey", "config.txt");
 
+    private static long s_lastWriteTicks = long.MinValue;
+
     private const string DefaultText = @"# PLATiNA LAB 모드 설정 파일 (SaveCustomKey/config.txt)
 # 저장하면 다음 곡(곡을 시작할 때)부터 적용됩니다. 게임을 다시 켤 필요는 없습니다.
 # 켜기/끄기 값: 1/0, true/false, 켜짐/꺼짐, on/off, 开/关 모두 됩니다. # 또는 // 로 시작하는 줄은 주석입니다.
@@ -88,6 +90,9 @@ KeyViewerPitchPressedColor=#FF4081E6
                 File.WriteAllText(path, DefaultText, new System.Text.UTF8Encoding(true));
                 Core.Log.Msg($"[Config] 기본 설정 파일 생성: {path}");
             }
+            long ticks = File.GetLastWriteTimeUtc(path).Ticks;
+            if (ticks == s_lastWriteTicks) return;
+
             foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
             {
                 var line = raw.Trim().TrimStart('﻿');
@@ -96,6 +101,7 @@ KeyViewerPitchPressedColor=#FF4081E6
                 if (eq <= 0) continue;
                 Apply(line[..eq].Trim(), line[(eq + 1)..].Trim());
             }
+            s_lastWriteTicks = ticks;
             Core.Log.Msg($"[Config] {reason}: AutoPlay={AutoPlay} AllPerfect={AllPerfect} JudgmentBar={EnableJudgmentBar} KeyViewer={EnableKeyViewer}");
         }
         catch (Exception e)
@@ -136,21 +142,21 @@ KeyViewerPitchPressedColor=#FF4081E6
     private static Color ColorOf(string v, Color fallback)
     {
         v = v.Trim();
-        switch (v)
+        switch (v.ToLowerInvariant())
         {
-            case "시안": case "青": case "青色": return new Color(0f, 1f, 1f);
-            case "마젠타": case "品红": case "洋红": return new Color(1f, 0f, 1f);
-            case "노랑": case "黄": case "黄色": return new Color(1f, 0.92f, 0.016f);
-            case "빨강": case "红": case "红色": return new Color(1f, 0f, 0f);
-            case "파랑": case "蓝": case "蓝色": return new Color(0f, 0f, 1f);
-            case "초록": case "绿": case "绿色": return new Color(0f, 1f, 0f);
-            case "흰색": case "白": case "白色": return new Color(1f, 1f, 1f);
-            case "검정": case "黑": case "黑色": return new Color(0f, 0f, 0f);
-            case "주황": case "橙": case "橙色": return new Color(1f, 0.5f, 0f);
-            case "보라": case "紫": case "紫色": return new Color(0.5f, 0f, 1f);
-            case "분홍": case "粉": case "粉色": return new Color(1f, 0.6f, 0.8f);
-            case "하늘": case "天蓝": case "天蓝色": return new Color(0.53f, 0.81f, 0.98f);
-            case "민트": case "薄荷": case "薄荷绿": return new Color(0.6f, 1f, 0.8f);
+            case "시안" or "cyan" or "青" or "青色": return new Color(0f, 1f, 1f);
+            case "마젠타" or "magenta" or "品红" or "洋红": return new Color(1f, 0f, 1f);
+            case "노랑" or "yellow" or "黄" or "黄色": return new Color(1f, 0.92f, 0.016f);
+            case "빨강" or "red" or "红" or "红色": return new Color(1f, 0f, 0f);
+            case "파랑" or "blue" or "蓝" or "蓝色": return new Color(0f, 0f, 1f);
+            case "초록" or "green" or "绿" or "绿色": return new Color(0f, 1f, 0f);
+            case "흰색" or "white" or "白" or "白色": return new Color(1f, 1f, 1f);
+            case "검정" or "black" or "黑" or "黑色": return new Color(0f, 0f, 0f);
+            case "주황" or "orange" or "橙" or "橙色": return new Color(1f, 0.5f, 0f);
+            case "보라" or "purple" or "紫" or "紫色": return new Color(0.5f, 0f, 1f);
+            case "분홍" or "pink" or "粉" or "粉色": return new Color(1f, 0.6f, 0.8f);
+            case "하늘" or "sky" or "skyblue" or "天蓝" or "天蓝色": return new Color(0.53f, 0.81f, 0.98f);
+            case "민트" or "mint" or "薄荷" or "薄荷绿": return new Color(0.6f, 1f, 0.8f);
         }
         if (v.StartsWith("#") && (v.Length == 7 || v.Length == 9) &&
             uint.TryParse(v[1..], NumberStyles.HexNumber, null, out var hex))
