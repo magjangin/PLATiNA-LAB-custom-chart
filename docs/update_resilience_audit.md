@@ -202,11 +202,42 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 | P4-5 | `MediaDuration`, `ModConfig`, `TextSanitizer`, `EncodingHelper` | 매 호출 버퍼 할당, 변경 없는 `config.txt` 재로드, 정상 문자열 Regex 호출, 대용량 문자열 `Split` | 수정 시각 캐시, UTF-8 리터럴(`u8`), `config.txt` 타임스탬프 비교, 빠른 경로, `StreamReader` 라인 읽기 |
 | P4-6 | `BmsConverter`, `CustomSongs`, `InteropNames` | `Convert` 내 `OrderBy` 3회, `BmsPath` 매번 디렉터리 스캔, 난이도 별칭 테이블 중복, `OriginalName` 우선 평가 | `Parse` 끝 1회 정렬, `MediaSlot` 5초 캐시 공용화, 난이도 테이블 일원화, `NamePattern` 우선 및 `DerivesFromIl2CppObject` 캐시 |
 
+## 5차 (2026-11-15): 전체 파일 재감사, 핫패스 병목, 정규화 버그
+
+검증: Release/Debug 빌드 경고·오류 0건, 오프라인 하네스에서 `[Guarded]` 45개 사전 JIT 실패 0건, `[HarmonyPatch]` 31개 타깃 누락·중복 0건, `TextSanitizer` 회귀 10건 통과. **인게임 실기 실행은 이 빌드로 미확인** (네이티브 필드 직접 읽기는 게임 안에서만 검증된다 — 아래 확인 항목 참고).
+
+### 병목
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| P5-1 | `CustomSongs.IsCustomSong` (SongInfo `IsLock`/`IsAvailable`/`IsNotOwned`/`IsHiddenFromDefaultList`/`IsNewSongMarkTarget`) | 주입 후 모든 곡의 판정마다 `SongInfo.Id` 게터 = `il2cpp_runtime_invoke` + 관리 문자열 생성. 선곡 화면은 곡 수 × 판정 수만큼 반복 | `NativeField`가 `<Id>k__BackingField` 오프셋을 IL2CPP 원래 이름으로 찾아 문자열 포인터를 직접 읽고, `NativeStrings.StartsWith`로 접두사(`hwa_`) 확인 (할당 0) |
+| P5-2 | `CustomSongs.Of(PatternInfo)` (`GetPatternFileName` Postfix·`SendGameEnd`) | 모든 패턴에서 `PatternIndex` 게터 runtime invoke | `<PatternIndex>k__BackingField` 직접 읽기 |
+| P5-3 | `DetermineRunning` 훅 | 커스텀 곡 플레이 중 매 프레임 + 입력 스레드에서 `PlayPattern`(runtime invoke)·`PatternIndex`·`_patternData`·`DurationMicroSec` 재조회 | PatternPlayer 포인터별 `HoldState`(커스텀 여부·보류 해제 시각) 캐시. `RequestGameStart`마다 비움. 패턴/차트가 아직 없으면 캐시하지 않음 |
+| P5-4 | `CustomSongs.Inject` | `BuildNameBanners`·`CreateAll`마다 패턴 전체를 `PatternIndex` 게터로 훑어 주입 여부 확인 | 같은 목록 포인터·개수면 바로 반환 (목록이 바뀌면 기존 확인으로) |
+| P5-5 | `PlayOverlay` | 판정 틱마다 `Place`가 `Screen.height`(IL2CPP) 호출, 위치가 안 바뀌어도 매 프레임 재배치 | 화면 크기는 프레임당 1회, 틱 위치는 기록 추가·만료·배치 변경 때만, 매 프레임은 색(투명도)만 |
+| P5-6 | `CustomCharts.ReadAll` | `Il2CppStructArray<byte>`를 LINQ `ToArray`로 복사 → 요소마다 가상 인덱서 | `AsSpan().ToArray()` (네이티브 버퍼 한 번에 복사) |
+
+`NativeField` 안전장치: 필드를 못 찾거나 오프셋이 객체 헤더 안·4096 초과면 꺼지고 게터 경로로 돌아간다. 처음 32건은 게터 결과와 비교한다 — `Id`는 접두사 판정이 아니라 **문자열 전체**를 비교한다(일반 곡은 모두 false라 접두사만 비교하면 잘못된 오프셋을 못 잡음). 다르면 `[Native] ... 관리 경로로 전환` 경고 후 게터만 쓴다. Locate 훅의 네이티브 문자열 검사도 같은 `NativeStrings`를 쓴다.
+
+### 정확성
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| B5-1 | `TextSanitizer` 일반 아포스트로피 정규식 | `\s*'\s*`라 따옴표를 축약형으로 오인: `Rock 'n' Roll` → `Rock'n' Roll`, `said 'hello'` → `said'hello'` | 양쪽이 모두 띄어진 경우(`o ' clock`)만 붙임 |
+| B5-2 | `TextSanitizer` 축약형 정규식 | `the 'S' rank` → `the'S' rank` | 접미사 뒤에 따옴표가 오면 제외 (`(?!')`) |
+| B5-3 | `ModConfig.Load` | 파일에서 지운 줄은 이전에 읽은 값이 게임을 끌 때까지 유지 (예: `AutoPlay=1` 줄을 지워도 계속 켜짐) | 다시 읽을 때 기본값으로 초기화한 뒤 적용 |
+
+### 확인 항목 (인게임)
+
+- `Latest.log`에 `[Native] SongInfo.Id 직접 읽기 자체 검증 32건 일치`, `[Native] PatternInfo.PatternIndex 직접 읽기 자체 검증 32건 일치`. `관리 경로로 전환` 경고가 있으면 기능은 유지되지만 최적화가 꺼진 것이다.
+- 선곡 화면에서 custom 카테고리 곡이 보이고 잠김/미보유로 나오지 않는지, 일반 곡 잠금 표시가 그대로인지.
+- 커스텀 곡 클리어 연출이 곡 끝에서 나오는지(`클리어 연출 보류` 로그 1회), 재도전 시에도 같은지.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
-3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `Failed to HarmonyInit PatchAll`도 검색한다.
+3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `Failed to HarmonyInit PatchAll`도 검색한다.
    - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT 및 `[HarmonyPatch]` 타깃 실패 0을 확인한다.
 4. 검증 기준 빌드를 `ModHealth.TestedBuildId`에 갱신한다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

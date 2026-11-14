@@ -121,6 +121,10 @@
   - **업데이트 내성 보강:** `PlayOverlay.FindFont`의 `LocalizeTMPFont` / `TextMeshProUGUI` 폴백 분리(기존엔 같은 메서드에 있어 JIT 실패 시 폴백 미도달), `OfflineSession.BuildLocalRecord` 내부 `EnsureSectionRecords`/`CreateEndGameResponse`/`ComputeAccuracy`/`ComputeMastery` 격리, `CustomSongs.Inject` 및 `GetDataSet`/`IsPreferredBaseSong`/`_difficultyTypeInfos`/`_songMetaData` 격리 + 리플렉션 폴백, `PlayAssist.ApplyAutoPlay`/`RestoreAutoPlay`의 `InGameSettingManager.Extra` 격리, `CustomCharts.ProcessPlayer`의 `TryGetCustomKey`/`ReadVanillaKey` 분리, `UpdateResilience`의 `BaseType` 상속 계층 탐색 및 `Convert.ChangeType` 변환 추가.
   - **병목 제거 & 캐싱:** `PatternPlayer_DetermineRunning_HoldEnd_Patch`의 `Postfix` 제거(`Finalizer`만 유지해 매 프레임·입력 틱마다 `ClearFlag` 2회 호출되던 중복 제거), `PlayOverlay.Update` 비플레이 화면(`!showAny && !s_rootActive`)에서 `s_root == null` IL2CPP 호출까지 생략, `CustomCharts` 일반 곡(`!DumpEnabled && !HasCustomChartFiles()`)·BMS 이중 JSON 직렬화/파싱 제거, `CustomMedia` Unity 6 `ReadOnlySpan` 예외 플래그 캐싱 및 음원(`HEAudioClip`) LRU 상한(8개)+타임스탬프 핫리로드, `MediaDuration` 길이 캐시+UTF-8 Span 리터럴(`u8`), `ModConfig` 수정 시각 기반 재로드 생략, `BmsConverter.Parse` 1회 정렬, `CustomChart.BmsPath` 5초 `MediaSlot` 캐싱, `EncodingHelper.ReadAllLinesSafe` `StreamReader` 라인 읽기, `TextSanitizer` 빠른 경로, `InteropNames.ReasonSelf` 평가 순서 및 `DerivesFromIl2CppObject` 캐시.
   - **리팩토링·오프라인 검증:** `CustomSong.NormalizeDifficulty`와 `BmsConverter.GetDifficultyAliases` 난이도 별칭 일원화, `tools/interop-harness`에 빌드된 `PLATiNALAB.Mod.dll`의 `[Guarded]` JIT 준비 및 `[HarmonyPatch]` 타깃 존재/모호성 검증 추가.
+- **5차 재감사: 핫패스 병목 · 정규화 버그 (2026-11-15, 상세 `docs/update_resilience_audit.md` "5차"):** 오프라인 검증만(빌드 경고·오류 0, 하네스 `[Guarded]` 45개·`[HarmonyPatch]` 31개 실패 0, `TextSanitizer` 회귀 10건). **인게임 미확인.**
+  - **네이티브 필드 직접 읽기 (`mod/NativeAccess.cs`):** 인터롭 게터(`SongInfo.Id`, `PatternInfo.PatternIndex`)는 `il2cpp_runtime_invoke`(+ 문자열 할당)라 선곡 화면에서 곡 수 × 판정 수만큼 쌓였다. `NativeField`가 IL2CPP 원래 이름(`<Id>k__BackingField`)으로 `il2cpp_class_get_field_from_name` → 오프셋을 구해 직접 읽고, 처음 32건은 게터와 비교(Id는 문자열 전체 비교)해 다르면 꺼진다. 문자열 검사는 `NativeStrings`(Locate 훅과 공용).
+  - **`DetermineRunning`:** PatternPlayer 포인터별 `HoldState` 캐시(커스텀 여부·보류 해제 시각), `RequestGameStart`마다 초기화. **`Inject`:** 같은 목록 포인터·개수면 재확인 생략. **오버레이:** 화면 크기 프레임당 1회, 판정 틱은 기록이 바뀔 때만 재배치. **차트 스트림:** `AsSpan().ToArray()`.
+  - **버그:** `TextSanitizer`가 따옴표를 축약형으로 오인해 붙임(`Rock 'n' Roll` → `Rock'n' Roll`) → 양쪽 공백일 때만 결합, 접미사 뒤 따옴표 제외. `ModConfig`는 지운 줄이 이전 값으로 남음 → 재로드 시 기본값 초기화.
 
 ---
 
@@ -182,6 +186,7 @@
 - **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`(게임 추출물), `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외 — 공개 저장소에 게임 바이너리/디컴파일 코드를 올리지 않는다.
 
 ## 7. 다음 단계 (미구현)
+- **2026-11-15 빌드(네이티브 필드 읽기) 인게임 확인:** `[Native] SongInfo.Id / PatternInfo.PatternIndex 직접 읽기 자체 검증 32건 일치` 로그, `관리 경로로 전환` 경고 없음, custom 카테고리 곡 잠금 없음·일반 곡 잠금 표시 그대로, 커스텀 곡 클리어 연출 타이밍(재도전 포함).
 - **2026-11-14 빌드(훅 격리·병목 수정) 인게임 확인:** 선곡 화면 커버·미리듣기 키 치환, 커스텀 곡 플레이(차트/BGM/BGA, 판정바·키뷰어·올 퍼펙트), 결과 화면, 일반 곡 1곡 플레이·결과 전송. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`과 `바인딩 실패로 꺼진 훅` 없음 확인.
 - 오토 플레이 인게임 확인(`IsScorable` 안전장치 포함). 키뷰어가 플레이 화면 하단 섹션 패널과 겹침 → 위치 조정 검토. 일시정지 화면 위에도 오버레이가 그려짐.
 - BMS 박자 변경(#mmm02)·STOP·PitchNote 인게임 판정 확인. 박자 변경은 PPP `bars`의 비 4/4 마디 position 소수부 의미 미확인 → 변박 원곡 덤프로 확인 후 구현.

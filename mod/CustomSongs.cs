@@ -28,6 +28,7 @@ internal sealed class CustomSong
     public readonly List<string> Lanes = new();
     public readonly List<CustomChart> Charts = new();
 
+    private static readonly char[] KeyValueSeparators = { ':', '=' };
     private static readonly string[] MusicNames = { "music.ogg", "audio.ogg", "song.ogg", "bgm.ogg", "音乐.ogg", "音频.ogg" };
     private static readonly string[] VideoNames = { "video.mp4", "bga.mp4", "bg.mp4", "视频.mp4", "背景.mp4" };
     private static readonly string[] ThumbnailNames =
@@ -93,7 +94,7 @@ internal sealed class CustomSong
             foreach (var raw in EncodingHelper.ReadAllLinesSafe(info))
             {
                 var line = raw.Trim().TrimStart('﻿');
-                int sep = line.IndexOfAny(new[] { ':', '=' });
+                int sep = line.IndexOfAny(KeyValueSeparators);
                 if (line.StartsWith("#") || sep <= 0) continue;
                 var key = line[..sep].Trim().ToLowerInvariant().Replace(" ", "");
                 var value = line[(sep + 1)..].Trim();
@@ -267,9 +268,26 @@ internal static class CustomSongs
 
     public static CustomChart ByKey(string key) => key != null && s_byKey.TryGetValue(key, out var c) ? c : null;
 
+    // 인터롭 게터(PatternIndex, Id)는 il2cpp_runtime_invoke를 거치고 Id는 관리 문자열까지 만든다.
+    // 모든 곡·패턴에서 도는 판정 훅은 백킹 필드를 직접 읽고, 처음 32건은 게터 결과와 맞춰 본다 (NativeField 설명 참고).
+    private static readonly NativeField s_patternIndexField = new("PatternInfo.PatternIndex", "<PatternIndex>k__BackingField");
+    private static readonly NativeField s_songIdField = new("SongInfo.Id", "<Id>k__BackingField");
+
     /// <summary>PatternInfo.PatternIndex를 직접 읽으므로 별도 메서드로 둔다 (호출부 try가 바인딩 실패를 잡을 수 있게).</summary>
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternInfo.PatternIndex", required: true)]
-    public static CustomChart Of(PatternInfo info) => info == null || s_byPatternIndex.Count == 0 ? null : ByPatternIndex(info.PatternIndex);
+    public static CustomChart Of(PatternInfo info)
+    {
+        if (info == null || s_byPatternIndex.Count == 0) return null;
+        if (s_patternIndexField.TryReadInt32(info.Pointer, out int native))
+        {
+            if (!s_patternIndexField.NeedsSelfCheck) return ByPatternIndex(native);
+            int managed = info.PatternIndex;
+            s_patternIndexField.ReportCheck(native == managed, $"{native} != {managed}");
+            return ByPatternIndex(managed);
+        }
+        return ByPatternIndex(info.PatternIndex);
+    }
+
     public static bool IsCustom(PatternInfo info) => Of(info) != null;
 
     private const string SongIdHook = "SongInfo.Id";
@@ -277,11 +295,23 @@ internal static class CustomSongs
     /// <summary>
     /// SongInfo 판정 훅(IsLock/IsAvailable 등)용. 이 훅들은 모든 곡에서 자주 불리므로
     /// 주입 전에는 Id를 읽지 않고, Id 읽기는 별도 메서드로 격리한다 (업데이트로 Id가 바뀌어도 일반 곡 판정은 원본대로).
+    /// 주입 후에는 Id 백킹 필드의 IL2CPP 문자열에서 접두사(hwa_)를 직접 확인한다 (게터 호출·문자열 할당 없음).
     /// </summary>
     public static bool IsCustomSong(SongInfo song)
     {
         if (!Injected || song == null || HookGuard.IsDisabled(SongIdHook)) return false;
-        try { return IsCustomId(ReadSongId(song)); }
+        try
+        {
+            if (s_songIdField.TryReadPointer(song.Pointer, out var idPtr))
+            {
+                if (!s_songIdField.NeedsSelfCheck) return NativeStrings.StartsWith(idPtr, IdPrefix);
+                // 접두사 판정만 비교하면 일반 곡(모두 false)으로는 잘못된 오프셋을 못 잡는다 → 문자열 전체를 비교
+                var managed = ReadSongId(song);
+                s_songIdField.ReportCheck(NativeStrings.EqualsManaged(idPtr, managed), $"'{managed}'");
+                return IsCustomId(managed);
+            }
+            return IsCustomId(ReadSongId(song));
+        }
         catch (Exception e)
         {
             HookGuard.Fail(SongIdHook, e, required: true);
@@ -344,8 +374,12 @@ internal static class CustomSongs
             return;
         }
         if (All.Count == 0) return;
+        // BuildNameBanners·CreateAll마다 불린다. 같은 목록에 이미 넣었으면 패턴 전체(곡 수 × 난이도)를 다시 훑지 않는다.
+        // 게임이 데이터를 새 목록으로 다시 만들거나 같은 목록을 비우고 채우면(개수 변화) 아래에서 다시 확인한다.
+        if (Injected && patterns.Pointer == s_injectedList && patterns.Count == s_injectedCount) return;
+        int firstIndex = All[0].Charts[0].PatternIndex;
         foreach (var p in patterns)
-            if (p.PatternIndex == All[0].Charts[0].PatternIndex) { Injected = true; return; } // 이미 주입됨
+            if (p.PatternIndex == firstIndex) { MarkInjected(patterns.Pointer, patterns.Count); return; } // 이미 주입됨
 
         // 기반 패턴: 일반 기본곡(lock=none, ESD=default)의 4라인 Easy.
         // 튜토리얼(tutorial_kr, lock=unlisted)을 쓰면 BGA 영상/타임 이벤트에 튜토리얼 안내가 섞여 나온다(실측).
@@ -425,6 +459,16 @@ internal static class CustomSongs
                 Core.Log.Msg($"[CustomSongs] 주입: {custom.Id} '{custom.Title}' {chart.GameDifficulty} Lv{chart.Level} (pattern {chart.PatternIndex}, 기반 {source.FilePath}) -> {pattern.FindSongInfo()?.Id ?? "null"}");
             }
         }
+        MarkInjected(patterns.Pointer, patterns.Count);
+    }
+
+    private static IntPtr s_injectedList;
+    private static int s_injectedCount;
+
+    private static void MarkInjected(IntPtr list, int count)
+    {
+        s_injectedList = list;
+        s_injectedCount = count;
         Injected = true;
     }
 
@@ -875,7 +919,22 @@ internal static class PatternPlayer_DetermineRunning_HoldEnd_Patch
 {
     private const string Hook = "PatternPlayer.DetermineRunning";
     private const int EndMarginMicroSec = 3_000_000;
-    private static IntPtr s_loggedFor;
+
+    /// <summary>
+    /// 곡(PatternPlayer)마다 한 번만 정하는 값: 커스텀 패턴인지, 보류를 풀 시각.
+    /// 예전에는 매 프레임(+ 입력 스레드) PlayPattern 게터(runtime invoke)·PatternIndex·_patternData·DurationMicroSec를 다시 읽었다.
+    /// 메인·입력 두 스레드가 읽으므로 한 객체로 바꿔 끼운다. 새 곡 시작(RequestGameStart)마다 비운다.
+    /// </summary>
+    private sealed class HoldState
+    {
+        public readonly IntPtr Player;
+        public readonly bool Custom;
+        public readonly long EndAt;
+        public HoldState(IntPtr player, bool custom, long endAt) { Player = player; Custom = custom; EndAt = endAt; }
+    }
+    private static volatile HoldState s_state;
+
+    public static void ResetCache() => s_state = null;
 
     private static void Prefix(Il2CppPlatinaLab.Main.InGame.PatternPlayer __instance, out bool __state)
     {
@@ -900,18 +959,32 @@ internal static class PatternPlayer_DetermineRunning_HoldEnd_Patch
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternPlayer.DetermineRunning")]
     private static bool TryHold(Il2CppPlatinaLab.Main.InGame.PatternPlayer player)
     {
-        if (!CustomSongs.IsCustom(player.PlayPattern) || player._isLastNoteProcessingTriggered) return false;
-        var data = player._patternData;
-        if (data == null) return false;
-        int endAt = data.DurationMicroSec - EndMarginMicroSec;
-        if (s_loggedFor != player.Pointer)
+        var ptr = player.Pointer;
+        var state = s_state;
+        if (state == null || state.Player != ptr)
         {
-            s_loggedFor = player.Pointer; // 곡(PatternPlayer)마다 한 번
-            Core.Log.Msg($"[CustomSongs] 클리어 연출 보류: {endAt / 1_000_000.0:F1}s까지 (차트 길이 {data.DurationMicroSec / 1_000_000.0:F1}s)");
+            state = CreateState(player, ptr);
+            if (state == null) return false; // 차트가 아직 안 들어옴 → 다음 호출에서 다시 확인
+            s_state = state;
         }
-        if (player.CurrentTimeMicroseconds >= endAt) return false;
+        if (!state.Custom || player._isLastNoteProcessingTriggered) return false;
+        if (player.CurrentTimeMicroseconds >= state.EndAt) return false;
         player._isLastNoteProcessingTriggered = true;
         return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternPlayer.DetermineRunning")]
+    private static HoldState CreateState(Il2CppPlatinaLab.Main.InGame.PatternPlayer player, IntPtr ptr)
+    {
+        var pattern = player.PlayPattern;
+        if (pattern == null) return null; // 패턴이 아직 안 정해짐 → "일반 곡"으로 굳히지 않고 다음 호출에서 다시 확인
+        if (!CustomSongs.IsCustom(pattern)) return new HoldState(ptr, false, 0);
+        var data = player._patternData;
+        if (data == null) return null;
+        int duration = data.DurationMicroSec;
+        long endAt = (long)duration - EndMarginMicroSec;
+        Core.Log.Msg($"[CustomSongs] 클리어 연출 보류: {endAt / 1_000_000.0:F1}s까지 (차트 길이 {duration / 1_000_000.0:F1}s)");
+        return new HoldState(ptr, true, endAt);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternPlayer.DetermineRunning")]

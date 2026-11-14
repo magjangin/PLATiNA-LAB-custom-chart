@@ -10,5 +10,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\mod\InteropNames.cs" Link="InteropNames.cs" />
+    <Compile Include="..\..\mod\TextSanitizer.cs" Link="TextSanitizer.cs" />
   </ItemGroup>
 </Project>

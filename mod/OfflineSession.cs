@@ -34,6 +34,7 @@ internal static class InGameSurface_RequestGameStart_Patch
     {
         var chart = CustomSongs.ByPatternIndex(patternId);
         CustomSongs.Current = chart;
+        PatternPlayer_DetermineRunning_HoldEnd_Patch.ResetCache(); // 같은 PatternPlayer를 다시 써도(재도전 등) 새 곡 기준으로 다시 정한다
         if (chart == null) return true;
         if (!ModHealth.CustomSongsAllowed || HookGuard.IsDisabled(Hook))
         {

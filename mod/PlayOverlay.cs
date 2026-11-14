@@ -72,6 +72,8 @@ internal static class PlayOverlay
     private static (float screenW, float screenH, bool vertical, int trackShape, int rangeShape, string side, float r0, float r1, float r2, float r3) s_barLayout;
     private static bool s_barLayoutValid;
     private static int s_hitVersion, s_labelVersion = -1;
+    private static int s_historyVersion, s_ticksPlacedVersion = -1; // 기록이 늘거나 만료될 때만 틱 위치를 다시 잡는다
+    private static float s_screenW, s_screenH; // 프레임마다 한 번만 읽는다 (Screen.width/height는 IL2CPP 호출)
     private static (float screenW, float screenH, string[] labels, int pitchIndex) s_keyLayout; // labels는 참조 비교 (BindKeys마다 새 배열)
     private static bool s_keyLayoutValid;
     private static int[] s_keyDrawn = Array.Empty<int>(); // 칸별로 마지막에 그린 상태 (-1 = 미정, 0 = 뗌, 1 = 누름)
@@ -85,6 +87,7 @@ internal static class PlayOverlay
         s_barLayoutValid = false;
         s_keyLayoutValid = false;
         s_labelVersion = -1;
+        s_ticksPlacedVersion = -1;
     }
 
     /// <summary>게임 루프 스레드에서 호출. error = 게임 단위(ms), 음수 = FAST.</summary>
@@ -114,6 +117,8 @@ internal static class PlayOverlay
             bool showAny = showBar || showKeys;
             // 비플레이 화면에서는 Unity Object == null 판정(IL2CPP 호출)조차 생략한다
             if (!showAny && !s_rootActive) return;
+            s_screenW = Screen.width;
+            s_screenH = Screen.height;
             if (s_root == null)
             {
                 if (!showAny) { s_rootActive = s_barActive = s_keyActive = false; return; }
@@ -240,7 +245,7 @@ internal static class PlayOverlay
     private static void Place(Graphic g, Rect r)
     {
         var rt = g.rectTransform;
-        rt.anchoredPosition = new Vector2(r.x, Screen.height - r.y - r.height);
+        rt.anchoredPosition = new Vector2(r.x, s_screenH - r.y - r.height);
         rt.sizeDelta = new Vector2(r.width, r.height);
     }
 
@@ -257,7 +262,6 @@ internal static class PlayOverlay
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("PlayOverlay.LoadRanges")]
     private static unsafe void LoadRanges()
     {
-        s_rangeLoaded = true;
         try
         {
             var map = Constants.JudgmentTimingMap;
@@ -321,15 +325,20 @@ internal static class PlayOverlay
                 s_history.Add(h);
                 s_last = h;
                 s_hitVersion++;
+                s_historyVersion++;
             }
             s_pending.Clear();
         }
         // 기록은 시간순으로 쌓이므로 만료된 것은 앞쪽에 몰려 있다 (예전 RemoveAll 람다는 매 프레임 클로저를 할당했다)
         int expired = 0;
         while (expired < s_history.Count && now - s_history[expired].Time > Duration) expired++;
-        if (expired > 0) s_history.RemoveRange(0, expired);
+        if (expired > 0)
+        {
+            s_history.RemoveRange(0, expired);
+            s_historyVersion++;
+        }
 
-        float screenW = Screen.width, screenH = Screen.height;
+        float screenW = s_screenW, screenH = s_screenH;
         bool vertical = ModConfig.JudgmentBarVertical;
         int trackShape = ModConfig.JudgmentBarShape;
         int rangeShape = ModConfig.JudgmentBarRangeShape == -1 ? trackShape : ModConfig.JudgmentBarRangeShape;
@@ -367,7 +376,11 @@ internal static class PlayOverlay
         {
             while (s_ticks.Count < activeCount) s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
             s_label.transform.SetAsLastSibling(); // 새 틱이 글자를 덮지 않게
+            s_ticksPlacedVersion = -1;
         }
+        // 틱 위치는 판정이 들어오거나 만료되거나 배치가 바뀔 때만 다시 잡는다. 매 프레임은 투명도(색)만 바꾼다.
+        bool placeTicks = layoutChanged || s_ticksPlacedVersion != s_historyVersion;
+        s_ticksPlacedVersion = s_historyVersion;
         for (int i = 0; i < s_ticks.Count; i++)
         {
             var tick = s_ticks[i];
@@ -378,11 +391,14 @@ internal static class PlayOverlay
             }
             // 최근 틱 우선 표시 (오래된 틱은 자동 가려짐)
             var t = s_history[s_history.Count - activeCount + i];
-            float ms = Mathf.Clamp(t.OffsetMs, -maxMs, maxMs);
+            if (placeTicks)
+            {
+                float ms = Mathf.Clamp(t.OffsetMs, -maxMs, maxMs);
+                Place(tick, vertical
+                    ? new Rect(cx - barW / 2f - 1f, cy - ms * scale - 1f, barW + 2f, 2f)  // 위 = FAST
+                    : new Rect(cx + ms * scale - 1f, cy - barH / 2f - 1f, 2f, barH + 2f)); // 오른쪽 = FAST
+            }
             var c = JudgeColor(t.Judgment); c.a = Mathf.Clamp01(1f - (now - t.Time) / Duration) * 0.9f;
-            Place(tick, vertical
-                ? new Rect(cx - barW / 2f - 1f, cy - ms * scale - 1f, barW + 2f, 2f)  // 위 = FAST
-                : new Rect(cx + ms * scale - 1f, cy - barH / 2f - 1f, 2f, barH + 2f)); // 오른쪽 = FAST
             tick.color = c; // 틱은 스프라이트 없는 사각형 (NewImage 기본값)
             if (!tick.enabled) tick.enabled = true;
         }
@@ -553,7 +569,7 @@ internal static class PlayOverlay
         float pitchW = boxW * 2f + gap;
 
         // 칸 배치·글자는 화면 크기나 키 배열(라인 모드)이 바뀔 때만 다시 설정한다
-        var layout = ((float)Screen.width, (float)Screen.height, labels, pitchIndex);
+        var layout = (s_screenW, s_screenH, labels, pitchIndex);
         if (!s_keyLayoutValid || s_keyLayout != layout)
         {
             s_keyLayout = layout;

@@ -161,7 +161,8 @@ internal static class CustomCharts
         {
             ms = new Il2CppSystem.IO.MemoryStream();
             stream.CopyTo(ms);
-            return ms.ToArray().ToArray();
+            // Il2CppStructArray를 LINQ ToArray로 옮기면 요소마다 가상 인덱서를 거친다 → 네이티브 버퍼를 Span으로 한 번에 복사
+            return ms.ToArray().AsSpan().ToArray();
         }
         catch (Exception e)
         {

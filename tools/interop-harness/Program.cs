@@ -30,7 +30,36 @@ static class P
         var asms = Directory.GetFiles(Interop, "*.dll").Select(f => { try { return AssemblyLoadContext.Default.LoadFromAssemblyPath(f); } catch { return null; } }).Where(a => a != null).ToList();
         if (args.Length > 0 && args[0] == "explore") { Explore(asms); return 0; }
         Evaluate(asms);
-        return VerifyModAssembly() ? 0 : 1;
+        bool textOk = VerifyTextSanitizer();
+        return VerifyModAssembly() && textOk ? 0 : 1;
+    }
+
+    /// <summary>곡 제목·아티스트 정규화 회귀 검사 (따옴표를 축약형으로 오인해 붙이던 문제 포함).</summary>
+    static bool VerifyTextSanitizer()
+    {
+        var cases = new (string input, string expected)[]
+        {
+            ("you'  re", "you're"),
+            ("don ' t", "don't"),
+            ("it ' s", "it's"),
+            ("o ' clock", "o'clock"),
+            ("Don’t Stop", "Don't Stop"),
+            ("Rock 'n' Roll", "Rock 'n' Roll"),
+            ("He said 'hello' world", "He said 'hello' world"),
+            ("the 'S' rank", "the 'S' rank"),
+            ("  double   space  ", "double space"),
+            ("どりーむもーど", "どりーむもーど"),
+        };
+        int failed = 0;
+        foreach (var (input, expected) in cases)
+        {
+            var actual = TextSanitizer.Sanitize(input);
+            if (actual == expected) continue;
+            failed++;
+            Console.WriteLine($"   [FAIL TextSanitizer] '{input}' -> '{actual}' (기대 '{expected}')");
+        }
+        Console.WriteLine($"[TextSanitizer] {cases.Length}건 중 실패 {failed}건");
+        return failed == 0;
     }
 
     static string Last(string original) { int plus = original.LastIndexOf('+'); return plus >= 0 ? original[(plus + 1)..] : original; }

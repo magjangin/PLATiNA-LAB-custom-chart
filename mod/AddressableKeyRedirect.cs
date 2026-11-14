@@ -144,7 +144,7 @@ internal static class AddressableKeyRedirect
                     // 다르면(인터롭/IL2CPP 문자열 배치 변경 등) 이후로는 관리 문자열 경로만 쓴다.
                     s = IL2CPP.Il2CppStringToManaged(ptr);
                     bool expected = s != null && s.Contains(CustomSongs.IdPrefix, StringComparison.Ordinal);
-                    if (NativeContains(ptr, CustomSongs.IdPrefix) != expected)
+                    if (NativeStrings.Contains(ptr, CustomSongs.IdPrefix) != expected)
                     {
                         s_useNativeScan = false;
                         Core.Log.Warning($"[KeyRedirect] 네이티브 문자열 검사 결과가 '{s}'에서 다름 → 관리 문자열 검사로 전환");
@@ -152,7 +152,7 @@ internal static class AddressableKeyRedirect
                     else if (Interlocked.Increment(ref s_selfChecks) == SelfCheckCount)
                         Core.Log.Msg($"[KeyRedirect] 네이티브 문자열 검사 자체 검증 {SelfCheckCount}건 일치");
                 }
-                else if (!NativeContains(ptr, CustomSongs.IdPrefix)) return;
+                else if (!NativeStrings.Contains(ptr, CustomSongs.IdPrefix)) return;
             }
             s ??= IL2CPP.Il2CppStringToManaged(ptr);
             if (s == null || !s.Contains(CustomSongs.IdPrefix, StringComparison.Ordinal)) return;
@@ -173,14 +173,4 @@ internal static class AddressableKeyRedirect
     private const int SelfCheckCount = 32;
     private static volatile bool s_useNativeScan = true;
     private static int s_selfChecks;
-
-    /// <summary>IL2CPP 문자열(UTF-16)에 needle이 있는지 관리 문자열을 만들지 않고 확인한다.</summary>
-    private static unsafe bool NativeContains(IntPtr il2cppString, string needle)
-    {
-        int length = IL2CPP.il2cpp_string_length(il2cppString);
-        if (length < needle.Length) return false;
-        char* chars = IL2CPP.il2cpp_string_chars(il2cppString);
-        if (chars == null) return false;
-        return new ReadOnlySpan<char>(chars, length).IndexOf(needle.AsSpan(), StringComparison.Ordinal) >= 0;
-    }
 }

@@ -22,9 +22,12 @@ internal static class ModConfig
     public static string JudgmentBarSide = "Center";
 
     public static bool EnableKeyViewer = true;
-    public static Color KeyViewerPressedColor = new(0.15f, 0.75f, 0.85f, 0.85f);
-    public static Color KeyViewerNormalColor = new(0.08f, 0.08f, 0.08f, 0.65f);
-    public static Color KeyViewerPitchPressedColor = new(1f, 0.25f, 0.5f, 0.9f);
+    private static readonly Color DefaultPressedColor = new(0.15f, 0.75f, 0.85f, 0.85f);
+    private static readonly Color DefaultNormalColor = new(0.08f, 0.08f, 0.08f, 0.65f);
+    private static readonly Color DefaultPitchPressedColor = new(1f, 0.25f, 0.5f, 0.9f);
+    public static Color KeyViewerPressedColor = DefaultPressedColor;
+    public static Color KeyViewerNormalColor = DefaultNormalColor;
+    public static Color KeyViewerPitchPressedColor = DefaultPitchPressedColor;
 
     public static string FilePath => Path.Combine(MelonEnvironment.GameRootDirectory, "SaveCustomKey", "config.txt");
 
@@ -93,6 +96,8 @@ KeyViewerPitchPressedColor=#FF4081E6
             long ticks = File.GetLastWriteTimeUtc(path).Ticks;
             if (ticks == s_lastWriteTicks) return;
 
+            // 파일에서 지운 줄은 기본값으로 돌아가야 한다 (예전에는 이전에 읽은 값이 게임을 끌 때까지 남았다)
+            ResetToDefaults();
             foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
             {
                 var line = raw.Trim().TrimStart('﻿');
@@ -108,6 +113,21 @@ KeyViewerPitchPressedColor=#FF4081E6
         {
             Core.Log.Warning($"[Config] config.txt 읽기 실패, 이전 값 유지: {e.Message}");
         }
+    }
+
+    private static void ResetToDefaults()
+    {
+        AutoPlay = false;
+        AllPerfect = false;
+        EnableJudgmentBar = true;
+        JudgmentBarVertical = true;
+        JudgmentBarShape = 0;
+        JudgmentBarRangeShape = -1;
+        JudgmentBarSide = "Center";
+        EnableKeyViewer = true;
+        KeyViewerPressedColor = DefaultPressedColor;
+        KeyViewerNormalColor = DefaultNormalColor;
+        KeyViewerPitchPressedColor = DefaultPitchPressedColor;
     }
 
     private static void Apply(string key, string value)

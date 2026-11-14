@@ -11,14 +11,17 @@ namespace PLATiNALAB.Mod;
 internal static class TextSanitizer
 {
     // 영문 아포스트로피 전후의 비정상 공백을 탐지하는 정규식
-    // 1. 단어 + 공백 + 아포스트로피 + 공백 + 축약형 접미사 (re, t, s, m, ll, ve, d)
+    // 1. 단어 + 공백 + 아포스트로피 + 공백 + 축약형 접미사 (re, t, s, m, ll, ve, d).
+    //    접미사 뒤에 또 따옴표가 오면 축약형이 아니라 따옴표로 감싼 글자다 ("the 'S' rank") → 건드리지 않는다.
     private static readonly Regex s_contractionRegex = new(
-        @"\b([a-zA-Z]+)\s*['’`´＇]\s*(re|t|s|m|ll|ve|d)\b",
+        @"\b([a-zA-Z]+)\s*['’`´＇]\s*(re|t|s|m|ll|ve|d)\b(?!['’`´＇])",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // 일반 영단어 사이의 아포스트로피 공백 교정 (예: o ' clock -> o'clock)
+    // 일반 영단어 사이의 아포스트로피 공백 교정 (예: o ' clock -> o'clock).
+    // 아포스트로피 양쪽이 모두 띄어진 경우만 붙인다. 한쪽만 띄어진 것은 따옴표일 수 있다:
+    //   "Rock 'n' Roll", "said 'hello'"(여는 따옴표), "'hello' world"(닫는 따옴표). 예전에는 "Rock'n' Roll"처럼 붙였다.
     private static readonly Regex s_generalApostropheRegex = new(
-        @"\b([a-zA-Z]+)\s*['’`´＇]\s*([a-zA-Z]+)\b",
+        @"\b([a-zA-Z]+)\s+['’`´＇]\s+([a-zA-Z]+)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // 2개 이상의 연속된 공백 및 유니코드 특수 공백(NBSP \u00A0, 전각 공백 \u3000 등)
