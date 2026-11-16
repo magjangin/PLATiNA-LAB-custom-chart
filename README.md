@@ -126,11 +126,23 @@ dotnet build mod\PLATiNALAB.Mod.csproj
 
 빌드가 끝나면 DLL이 `<GameRoot>\Mods\`로 자동 복사됩니다.
 
+## 게임이 업데이트됐을 때
+
+모드는 특정 게임 빌드(Build ID `25981392`, `GameAssembly.dll` 96,829,440바이트)에서 검증했습니다. 업데이트 후에는 시작할 때 `MelonLoader\Latest.log`의 `[Health]` 줄이 상태를 알려 줍니다.
+
+- `게임 빌드 ...와 다릅니다` / `GameAssembly.dll ...바이트와 다릅니다`: 게임이 바뀐 것입니다. 모드를 다시 빌드하세요(이름·시그니처 변경은 대부분 컴파일 오류로 드러납니다).
+- `필수 패치 누락` 또는 `[HookGuard] ... 훅을 끕니다`: 해당 기능(또는 커스텀 곡 주입)이 자동으로 꺼지고 게임 원본 동작은 유지됩니다. 일반 곡 플레이는 영향이 없도록 설계했습니다.
+- `[Init] ... 실패`: 해당 초기화 단계만 건너뛴 것입니다.
+
+게임 없이 먼저 확인하려면 `tools/interop-harness`에서 `dotnet run -c Release`를 실행하세요. 자세한 확인 순서는 [`docs/update_resilience_audit.md`](docs/update_resilience_audit.md)에 있습니다.
+
 ## 저장소 구성
 
 | 경로 | 내용 |
 | --- | --- |
 | `mod/` | 모드 소스코드 |
+| `tools/interop-harness/` | 게임 없이 인터롭 어셈블리·훅 대상을 검증하는 오프라인 도구 |
+| `docs/update_resilience_audit.md` | 업데이트 내성 감사 기록과 게임 업데이트 후 확인 순서 |
 | `docs/chart_format.md` | 차트(PPP JSON) 형식 및 BMS 변환 규칙 상세 |
 | `docs/hooks.md` | 후킹 대상 메서드 명세서 |
 | `AGENTS.md` | 개발 인수인계 문서 (설계 의도, 감사 기록, 실패 기록) |

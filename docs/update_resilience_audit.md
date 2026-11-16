@@ -233,11 +233,26 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - 선곡 화면에서 custom 카테고리 곡이 보이고 잠김/미보유로 나오지 않는지, 일반 곡 잠금 표시가 그대로인지.
 - 커스텀 곡 클리어 연출이 곡 끝에서 나오는지(`클리어 연출 보류` 로그 1회), 재도전 시에도 같은지.
 
+## 6차 (2026-11-16): 파일 지문, 초기화 격리, 필수 패치 이름 오프라인 대조
+
+검증: Release 빌드 경고·오류 0건, 하네스 `[Guarded]` 45개·`[HarmonyPatch]` 31개 실패 0건, 신규 `[Required]` 10개 실패 0건. **인게임 실기 실행은 이 빌드로 미확인** (`Latest.log`는 2026-11-14 빌드 기록).
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| U6-1 | `ModHealth.LogGameAssemblyFingerprint` | 업데이트 감지가 Steam 매니페스트의 `buildid` 하나뿐. 이 프로젝트는 `.acf` 패치 차단·DepotDownloader 복사본을 쓰므로 매니페스트가 실제 파일과 어긋나거나 아예 없을 수 있어 업데이트를 놓칠 수 있음 | `GameAssembly.dll` 실제 크기를 검증 기준(`TestedGameAssemblySize` = 96,829,440바이트)과 비교해 로그. 다르면 매니페스트와 무관하게 경고 (`[Health] GameAssembly.dll ...`) |
+| U6-2 | `Core.OnInitializeMelon` | 초기화 4단계(설정·차트·곡 스캔·Locate 패치)가 한 메서드에 연달아 있어 앞 단계 예외가 뒤 단계를 막음 (예: 곡 폴더 스캔 실패 → Locate 패치 미적용) | `Step()`으로 단계별 격리, 실패한 단계만 `[Init] ... 실패` 로그. `OnLateInitializeMelon`의 `ModHealth.CheckOnStart`도 예외가 모드 로드를 막지 않게 감쌈 |
+| U6-3 | `tools/interop-harness` | `ModHealth.s_requiredPatches` 이름은 문자열이라 오타·리팩토링으로 `[HarmonyPatch]` 대상과 어긋나도 컴파일 오류가 안 남. 어긋나면 게임에서 항상 "필수 패치 누락"으로 커스텀 곡이 꺼짐 | 하네스가 `[HarmonyPatch]`에서 `선언타입.메서드`(getter는 `get_`) 키를 모아 필수 패치 10종과 대조 (`[Required]`). 어긋나면 하네스가 실패 코드를 반환 |
+
+### 확인 항목 (인게임)
+
+- `Latest.log`에 `[Health] GameAssembly.dll 96,829,440바이트 (검증된 파일)` 한 줄. 게임 업데이트 후엔 `검증 기준 ...와 다릅니다` 경고가 `buildid` 경고와 별개로 나온다.
+- `[Init] ... 실패` 줄이 없는지 (있으면 해당 단계만 꺼진 것).
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
-3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `Failed to HarmonyInit PatchAll`도 검색한다.
+3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `Failed to HarmonyInit PatchAll`도 검색한다.
    - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT 및 `[HarmonyPatch]` 타깃 실패 0을 확인한다.
-4. 검증 기준 빌드를 `ModHealth.TestedBuildId`에 갱신한다.
+4. 검증 기준 빌드를 `ModHealth.TestedBuildId`와 `TestedGameAssemblySize`(= `GameAssembly.dll` 바이트 수)에 갱신한다. 필수 패치 목록(`s_requiredPatches`)을 바꿨다면 하네스 `[Required]`가 통과하는지도 본다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

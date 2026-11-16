@@ -126,6 +126,10 @@
   - **`DetermineRunning`:** PatternPlayer 포인터별 `HoldState` 캐시(커스텀 여부·보류 해제 시각), `RequestGameStart`마다 초기화. **`Inject`:** 같은 목록 포인터·개수면 재확인 생략. **오버레이:** 화면 크기 프레임당 1회, 판정 틱은 기록이 바뀔 때만 재배치. **차트 스트림:** `AsSpan().ToArray()`.
   - **버그:** `TextSanitizer`가 따옴표를 축약형으로 오인해 붙임(`Rock 'n' Roll` → `Rock'n' Roll`) → 양쪽 공백일 때만 결합, 접미사 뒤 따옴표 제외. `ModConfig`는 지운 줄이 이전 값으로 남음 → 재로드 시 기본값 초기화.
 
+- **파일 지문·초기화 격리·필수 패치 대조 (2026-11-16, 상세 `docs/update_resilience_audit.md` "6차"):** 오프라인 검증만(빌드 경고·오류 0, 하네스 `[Guarded]` 45·`[HarmonyPatch]` 31·`[Required]` 10 실패 0). **인게임 미확인.**
+  - **Rationale:** 이 프로젝트는 `.acf` 패치 차단·DepotDownloader를 쓰므로 Steam 매니페스트 `buildid`가 실제 파일과 다를 수 있다 → `ModHealth`가 `GameAssembly.dll` 실제 크기(`TestedGameAssemblySize`, 현재 96,829,440)도 검증 기준과 비교한다. 게임 파일 버전을 올려 재검증하면 `TestedBuildId`와 함께 갱신할 것.
+  - `Core.OnInitializeMelon`은 설정·차트·곡 스캔·Locate 패치를 `Step()`으로 각각 격리(한 단계 실패가 나머지를 막지 않음). 하네스는 `ModHealth.s_requiredPatches` 문자열이 실제 `[HarmonyPatch]` 타깃과 일치하는지 대조한다 — 필수 패치를 추가·이름 변경하면 하네스를 돌릴 것.
+
 ---
 
 ## 4. 핵심 후킹 타깃 클래스 & 메서드 시그니처

@@ -52,9 +52,16 @@ internal static class ModHealth
         Core.Log.Error($"[Health] 커스텀 곡 주입을 끕니다: {reason}");
     }
 
+    /// <summary>
+    /// 검증 빌드의 GameAssembly.dll 크기(바이트). Steam .acf 업데이트 차단·DepotDownloader 복사본처럼 매니페스트의 buildid가
+    /// 실제 파일과 어긋날 수 있어서, 실제 파일 크기를 두 번째 기준으로 쓴다 (업데이트가 있었다면 코드가 다시 컴파일돼 거의 항상 달라진다).
+    /// </summary>
+    private const long TestedGameAssemblySize = 96829440;
+
     public static void CheckOnStart()
     {
         LogBuildId();
+        LogGameAssemblyFingerprint();
         HookGuard.Precheck(typeof(ModHealth).Assembly);
         CheckRequiredPatches();
     }
@@ -76,6 +83,21 @@ internal static class ModHealth
             else Core.Log.Warning($"[Health] 게임 빌드 {build}: 모드 검증 기준 {TestedBuildId}와 다릅니다. 문제가 있으면 모드를 다시 빌드하세요.");
         }
         catch (Exception e) { Core.Log.Warning($"[Health] 게임 빌드 확인 실패: {e.Message}"); }
+    }
+
+    private static void LogGameAssemblyFingerprint()
+    {
+        try
+        {
+            var file = new FileInfo(Path.Combine(MelonEnvironment.GameRootDirectory, "GameAssembly.dll"));
+            if (!file.Exists) { Core.Log.Warning("[Health] GameAssembly.dll을 찾지 못해 파일 지문 확인을 생략"); return; }
+            if (file.Length == TestedGameAssemblySize)
+                Core.Log.Msg($"[Health] GameAssembly.dll {file.Length:N0}바이트 (검증된 파일)");
+            else
+                Core.Log.Warning($"[Health] GameAssembly.dll {file.Length:N0}바이트: 검증 기준 {TestedGameAssemblySize:N0}바이트와 다릅니다 " +
+                                 $"(수정 {file.LastWriteTime:yyyy-MM-dd HH:mm}). 매니페스트 buildid가 같아도 게임 파일이 바뀐 것입니다 — 모드를 다시 빌드하세요.");
+        }
+        catch (Exception e) { Core.Log.Warning($"[Health] GameAssembly.dll 지문 확인 실패: {e.Message}"); }
     }
 
     private static void CheckRequiredPatches()

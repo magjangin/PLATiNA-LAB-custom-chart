@@ -233,8 +233,31 @@ static class P
 
         Console.WriteLine($"[Guarded] 사전 JIT 검증: {guardedCount}개 중 실패 {guardedFailed}개");
         Console.WriteLine($"[HarmonyPatch] 타깃 존재 검증: {patchCount}개 중 실패 {patchFailed}개");
-        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0;
+
+        // ModHealth.s_requiredPatches의 모든 이름이 실제 [HarmonyPatch] 타깃과 일치하는지 (오타·리팩토링으로 어긋나면
+        // 게임에서 항상 "필수 패치 누락"으로 커스텀 곡이 꺼지므로 오프라인에서 먼저 잡는다)
+        int requiredFailed = 0;
+        var healthType = modAsm.GetType("PLATiNALAB.Mod.ModHealth");
+        var required = healthType?.GetField("s_requiredPatches", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as string[];
+        if (required == null)
+        {
+            requiredFailed++;
+            Console.WriteLine("   [FAIL Required] ModHealth.s_requiredPatches를 찾지 못함");
+        }
+        else
+        {
+            foreach (var name in required)
+                if (!PatchedKeys.Contains(name))
+                {
+                    requiredFailed++;
+                    Console.WriteLine($"   [FAIL Required] 필수 패치 '{name}'에 대응하는 [HarmonyPatch]가 없음");
+                }
+            Console.WriteLine($"[Required] 필수 패치 이름 대조: {required.Length}개 중 실패 {requiredFailed}개");
+        }
+        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0;
     }
+
+    static readonly HashSet<string> PatchedKeys = new();
 
     static bool VerifyHarmonyPatch(Type patchClass, CustomAttributeData data, out string error)
     {
@@ -265,6 +288,9 @@ static class P
             error = "대상 타입 또는 메서드 이름이 비어 있음";
             return false;
         }
+
+        // ModHealth의 필수 패치 이름("선언타입.메서드")과 같은 형식으로 기록 (getter/setter는 get_/set_ 접두사)
+        PatchedKeys.Add($"{targetType.Name}.{(methodType == 1 ? "get_" : methodType == 2 ? "set_" : "")}{methodName}");
 
         const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
         if (methodType == 1) // Getter
