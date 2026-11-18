@@ -622,14 +622,21 @@ internal static class CustomSongs
         metas.Add(custom.Id, meta);
     }
 
+    private const string PopulateSongMetaDirectHook = "CustomSongs.PopulateSongMetaDirect";
+    private const string SetSongFieldDirectHook = "CustomSongs.SetSongFieldDirect";
+    private const string SetPatternFieldDirectHook = "CustomSongs.SetPatternFieldDirect";
+
     private static void PopulateSongMeta(SongMetaDataInfo meta, SongMetaDataInfo baseMeta, CustomSong custom)
     {
-        try
+        if (!HookGuard.IsDisabled(PopulateSongMetaDirectHook))
         {
-            PopulateSongMetaDirect(meta, baseMeta, custom);
-            return;
+            try
+            {
+                PopulateSongMetaDirect(meta, baseMeta, custom);
+                return;
+            }
+            catch (Exception e) { HookGuard.Fail(PopulateSongMetaDirectHook, e); }
         }
-        catch { /* 리플렉션 폴백 */ }
 
         UpdateResilience.SafeSetFieldOrProperty(meta, "Id", custom.Id);
         UpdateResilience.SafeSetFieldOrProperty(meta, "Title", custom.Title);
@@ -646,7 +653,7 @@ internal static class CustomSongs
         }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.PopulateSongMetaDirect")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(PopulateSongMetaDirectHook)]
     private static void PopulateSongMetaDirect(SongMetaDataInfo meta, SongMetaDataInfo baseMeta, CustomSong custom)
     {
         if (baseMeta != null) { meta.Genre = baseMeta.Genre; meta.LicensedBy = baseMeta.LicensedBy; }
@@ -676,11 +683,16 @@ internal static class CustomSongs
     private static void SetSongField(SongInfo song, string propName, object value)
     {
         if (UpdateResilience.SafeSetFieldOrProperty(song, propName, value)) return;
+        if (HookGuard.IsDisabled(SetSongFieldDirectHook)) return;
         try { SetSongFieldDirect(song, propName, value); }
-        catch (Exception e) { Core.Log.Warning($"[CustomSongs] SongInfo.{propName} 설정 폴백 실패: {e.Message}"); }
+        catch (Exception e)
+        {
+            if (!HookGuard.Fail(SetSongFieldDirectHook, e))
+                Core.Log.Warning($"[CustomSongs] SongInfo.{propName} 설정 폴백 실패: {e.Message}");
+        }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.SetSongFieldDirect")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(SetSongFieldDirectHook)]
     private static void SetSongFieldDirect(SongInfo song, string propName, object value)
     {
         switch (propName)
@@ -697,11 +709,16 @@ internal static class CustomSongs
     private static void SetPatternField(PatternInfo pattern, string propName, object value)
     {
         if (UpdateResilience.SafeSetFieldOrProperty(pattern, propName, value)) return;
+        if (HookGuard.IsDisabled(SetPatternFieldDirectHook)) return;
         try { SetPatternFieldDirect(pattern, propName, value); }
-        catch (Exception e) { Core.Log.Warning($"[CustomSongs] PatternInfo.{propName} 설정 폴백 실패: {e.Message}"); }
+        catch (Exception e)
+        {
+            if (!HookGuard.Fail(SetPatternFieldDirectHook, e))
+                Core.Log.Warning($"[CustomSongs] PatternInfo.{propName} 설정 폴백 실패: {e.Message}");
+        }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.SetPatternFieldDirect")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(SetPatternFieldDirectHook)]
     private static void SetPatternFieldDirect(PatternInfo pattern, string propName, object value)
     {
         switch (propName)
@@ -718,14 +735,20 @@ internal static class CustomSongs
     /// <summary>기반 차트에서 가장 앞의 노트 하나만 남긴 PPP JSON (곡 폴더에 chart.json이 없을 때 템플릿).</summary>
     public static byte[] MakeFirstNoteChart(byte[] original)
     {
-        var root = JsonNode.Parse(original)!.AsObject();
-        var notes = root["notes"]!.AsArray();
-        JsonNode first = null;
-        foreach (var n in notes)
-            if (first == null || n!["startPosition"]!.GetValue<double>() < first["startPosition"]!.GetValue<double>())
-                first = n;
+        if (original == null || original.Length == 0 || JsonNode.Parse(original) is not JsonObject root)
+            return original ?? Array.Empty<byte>();
         var kept = new JsonArray();
-        if (first != null) kept.Add(JsonNode.Parse(first.ToJsonString()));
+        if (root["notes"] is JsonArray notes)
+        {
+            JsonNode first = null;
+            double firstPos = double.MaxValue;
+            foreach (var n in notes)
+            {
+                if (n?["startPosition"] is not JsonValue v || !v.TryGetValue<double>(out var pos)) continue;
+                if (first == null || pos < firstPos) { first = n; firstPos = pos; }
+            }
+            if (first != null) kept.Add(JsonNode.Parse(first.ToJsonString()));
+        }
         root["notes"] = kept;
         // 기반 곡의 HideUI/ShowUI 같은 연출 이벤트는 커스텀 곡에 맞지 않으므로 제거
         root["timeTriggeredEvents"] = new JsonArray();

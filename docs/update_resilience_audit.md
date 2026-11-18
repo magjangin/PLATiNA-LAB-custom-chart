@@ -370,6 +370,25 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - 선곡 화면 custom 카테고리 표시·잠금 없음, 일반 곡 잠금 표시 그대로.
 - 커스텀 곡 플레이: 판정바·키뷰어, 올 퍼펙트, 오토 플레이 켬/끔, 결과 화면.
 
+## 10차 (2026-11-19): 수정 기록 감사, 폴백 단락·리팩토링 및 하네스 `[Diag]`·`[NativeField]` 검증 추가
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 54개·`[HarmonyPatch]` 26개·`[Required]` 10개·`[Layout]` 277개·`[Body]` 384개 메서드(비`[Guarded]` NoInlining 2개)·신규 `[Diag]` 5개·신규 `[NativeField]` 2개·`[BmsFind]` 8건·`[TextSanitizer]` 10건·`[PureLogic]` 실패 0건. **인게임 실기 실행은 이 빌드로 미확인.**
+
+### 수정 기록 감사 (1~9차 이력·HookGuard 키 전수 대조)
+
+- `mod/*.cs` 전체의 `[Guarded]`·`HookGuard.IsDisabled`·`HookGuard.Fail` 키를 전수 대조하고, 1~9차 감사 기록과 현재 코드·`AGENTS.md`·`docs/hooks.md`의 정합성을 확인했다.
+- 결과: 아래 U10-1~U10-3의 "사전 점검에서 꺼진 `[Guarded]` 키를 호출부가 단락하지 않던 지점" 5곳과, 문자열/네이티브 오프셋 타깃의 오프라인 검증 공백(U10-4)을 발견해 수정했다.
+
+### 업데이트 내성 · 리팩토링
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| U10-1 | `PlayAssist.ApplyAutoPlay` / `ReadIsScorable` | `InGameSettingHelper.IsScorable`가 사전 점검에서 실패해도 `ApplyAutoPlay`가 `AutoPlayHook`만 확인해 `Extra.AutoPlay`를 먼저 켠 뒤 예외로 되돌리는 흐름 | `ApplyAutoPlay` 진입부에서 `HookGuard.IsDisabled(IsScorableHook)`도 함께 확인해 기록 보호 안전장치가 깨졌으면 아예 켜지 않음 |
+| U10-2 | `CustomMedia.SetClipData` | `SetClipDataDirect`가 `[Guarded]`이지만 실패 시 `HookGuard.IsDisabled`/`Fail`로 단락하지 않아 업데이트 후 매 클립마다 예외 후 리플렉션 폴백 반복 | `SetClipDataDirectHook` 상수로 단락·보고 |
+| U10-3 | `CustomSongs` (`PopulateSongMeta`, `SetSongField`, `SetPatternField`) | `*Direct` 헬퍼 3종이 `[Guarded]`이지만 호출부가 `HookGuard.IsDisabled`/`Fail`로 단락하지 않아 곡/패턴 수만큼 예외 반복 가능 | 3종 모두 `HookGuard.IsDisabled`/`Fail`로 단락해 첫 실패(또는 사전 점검) 이후 바로 리플렉션/건너뛰기 처리 |
+| U10-4 | `DiagnosticPatches.cs`, `tools/interop-harness` | `DiagnosticPatches`가 문자열(`TypeByName`)로 전환되면서 오프라인 하네스 검증 대상에서 빠졌고, `NativeField` 백킹 필드 2종도 오프라인 검증이 없었음 | `DiagnosticPatches.s_targets` 테이블화(리팩토링) + 하네스에 `[Diag]`(5종)·`[NativeField]`(2종) 검증 추가 |
+| R10-1 | `CustomMedia.GetCover`, `CustomSongs.MakeFirstNoteChart` | `GetCover`의 LRU 퇴거 루프가 1차/2차 lock에 중복, `MakeFirstNoteChart`가 `notes` 누락/비정상 JSON에서 NRE 가능 | `EvictCoversIfFull()` 추출, `MakeFirstNoteChart` null/타입 방어 보강 |
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

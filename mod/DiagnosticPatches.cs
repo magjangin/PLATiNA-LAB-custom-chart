@@ -12,21 +12,23 @@ internal static class DiagnosticPatches
 {
     private static bool s_applied;
 
+    // 오프라인 하네스([Diag])가 이 테이블을 읽어 게임 인터롭에 대상 타입·메서드가 실제로 존재하는지 함께 검증한다.
+    private static readonly (string TypeName, string MethodName, string Prefix, string Postfix)[] s_targets =
+    {
+        ("Il2CppPlatinaLab.Main.Director.PlayDirector", "TrySaveScoreAndGameOver", nameof(LogTrySave), null),
+        ("Il2CppPlatinaLab.Main.Common.Dialog.ErrorDialogCollection", "APIServerError", nameof(LogApiServerError), null),
+        ("Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper", "IsScorable", null, nameof(LogIsScorable)),
+        ("Il2CppPlatinaLab.Main.InGame.PatternPlayer", "SetPatternDataToPlay", nameof(LogSetPatternData), null),
+        ("Il2CppPlatinaLab.Main.Select.Category.Cache.AbstractPreFilteredCache", "UpdatePostProcessData", null, nameof(LogUpdatePostProcess)),
+    };
+
     public static void Apply(HarmonyLib.Harmony harmony)
     {
         if (s_applied || harmony == null) return;
         s_applied = true;
 
-        TryPatch(harmony, "Il2CppPlatinaLab.Main.Director.PlayDirector", "TrySaveScoreAndGameOver",
-            prefix: nameof(LogTrySave));
-        TryPatch(harmony, "Il2CppPlatinaLab.Main.Common.Dialog.ErrorDialogCollection", "APIServerError",
-            prefix: nameof(LogApiServerError));
-        TryPatch(harmony, "Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper", "IsScorable",
-            postfix: nameof(LogIsScorable));
-        TryPatch(harmony, "Il2CppPlatinaLab.Main.InGame.PatternPlayer", "SetPatternDataToPlay",
-            prefix: nameof(LogSetPatternData));
-        TryPatch(harmony, "Il2CppPlatinaLab.Main.Select.Category.Cache.AbstractPreFilteredCache", "UpdatePostProcessData",
-            postfix: nameof(LogUpdatePostProcess));
+        foreach (var (typeName, methodName, prefix, postfix) in s_targets)
+            TryPatch(harmony, typeName, methodName, prefix, postfix);
 
         Core.Log.Msg("[Diag] 진단용 로그 패치 적용 완료 (DiagnosticLogs=1)");
     }

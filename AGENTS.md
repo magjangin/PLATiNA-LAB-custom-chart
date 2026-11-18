@@ -2,7 +2,7 @@
 
 ## 1. 대상 게임 버전 & 환경 정보
 - **게임명:** PLATiNA LAB (Steam App ID: `3430470`)
-- **Steam Build ID:** `25981392`
+- **Steam Build ID / 지문:** `25981392` / `GameAssembly.dll` `96,829,440`바이트 (`ModHealth`가 `appmanifest_3430470.acf`의 `buildid`와 실제 파일 크기를 이중 확인 — `.acf` 자동 업데이트 차단·DepotDownloader 복사본 환경 대비)
 - **Unity 버전:** `6000.3.25f1`
 - **스크립팅 백엔드:** IL2CPP (metadata v39)
 - **모드 로더:** MelonLoader 0.7.3 Open-Beta (`net6` 런타임)
@@ -16,10 +16,11 @@
   - `H:\source\repos\PLATiNA LAB-unity-il2cpp\src_dummy\Main` (`Il2CppPlatinaLab.Main.dll`)
   - `H:\source\repos\PLATiNA LAB-unity-il2cpp\src_dummy\DataModel` (`Il2CppPlatinaLab.DataModel.dll`)
 - **실행 로그:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\logs\`
+- **런타임 데이터 경로 (게임 폴더 기준):** `hwa\`(커스텀 곡), `SaveCustomKey\config.txt`(설정 핫리로드), `UserData\PLATiNALAB\song_ids.json`(곡 ID 영속화)·`ChartDump\`·`CustomCharts\`
 - **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과)
-- **후킹 후보 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
+- **후킹 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
-- **업데이트 내성 감사 & 감사 이력(2~9차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
+- **업데이트 내성 감사 & 감사 이력(1~10차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -38,7 +39,7 @@
 - **플레이 보조 & 오버레이 (`mod/ModConfig.cs`, `mod/PlayAssist.cs`, `mod/PlayOverlay.cs`):** `SaveCustomKey\config.txt` 핫리로드. 오토 플레이(`Extra.AutoPlay`), 올 퍼펙트(커스텀 곡 전용), uGUI Canvas 판정바·키뷰어.
 - **오프라인 세션 (`mod/OfflineSession.cs`):** 커스텀 곡의 `RequestGameStart`/`RenewGameSession`/`SendGameEnd` 서버 호출 차단 및 로컬 결과(`AccuracyV2Formula`/`MasteryV2Formula`) 생성.
 - **진단 패치 (`mod/DiagnosticPatches.cs`):** 로그 전용 패치는 `DiagnosticLogs=1`일 때만 수동 적용.
-- **코드 작성 필수 규칙 (하네스 `[Guarded]`/`[Layout]`/`[Body]` 검증):**
+- **코드 작성 필수 규칙 (하네스 `[Guarded]`/`[HarmonyPatch]`/`[Required]`/`[Layout]`/`[Body]`/`[Diag]`/`[NativeField]` 검증):**
   1. 게임 타입 직접 참조를 `try`로 감쌀 때는 `[MethodImpl(NoInlining), Guarded("...")]` 별도 메서드로 분리 (같은 메서드의 `try`는 JIT 실패를 못 잡음). 게임 멤버를 직접 참조하는 모든 `[NoInlining]` 격리 메서드에도 `[Guarded]` 필수.
   2. 모드 클래스 필드에 게임 `enum`을 그대로 저장하지 말고 `int`로 저장.
   3. 게임 `record` 객체(`SongInfo`, `PatternInfo`, `PlayResult` 등)에 `== null`/`!= null` 대신 `is null`/`is not null` 사용 (인터롭 `op_Equality`는 `il2cpp_runtime_invoke`).
@@ -82,12 +83,12 @@
   (다른 경로에 게임이 있으면 `-p:GameRoot="C:\...\PLATiNA LAB"` 지정)
 - **배포 경로:** `PostBuild`가 `$(GameRoot)\Mods\PLATiNALAB.Mod.dll`로 자동 복사 (게임 실행 중 잠김 시 경고 후 계속).
 - **오프라인 하네스:** `dotnet run --project "H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness" -c Release`
-- **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`, `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외.
+- **Git 원격:** `origin` = https://github.com/magjangin/PLATiNA-LAB-custom-chart (public), `local` = `H:\local-repos\PLATiNA LAB-unity-il2cpp.git` (로컬 백업). `dummy_dll/`, `src_dummy/`, `slices/`, `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외.
 
 ---
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
-- 최신 빌드 인게임 실기 확인: `[HookGuard]`, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.
+- 최신 빌드 인게임 실기 확인: `[HookGuard]`(54개 메서드), `[Native]` 자체 검증, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.
 - 키뷰어 위치가 하단 섹션 패널과 겹치는 문제 및 일시정지 화면 위 오버레이 표시 개선.
 - BMS 박자 변경(`#mmm02`)·STOP·PitchNote 인게임 판정 확인.
-- 결과 화면 `SectionDetailPanelController.Initialize` NRE 원인 해소.
+- 결과 화면 `SectionDetailPanelController.Initialize` NRE 원인 해소 (`OfflineSession.EnsureSectionRecords` 빈 배열 방어 적용됨, 실기 재확인 필요).

@@ -32,7 +32,7 @@ static class P
         Evaluate(asms);
         bool textOk = VerifyTextSanitizer();
         bool pureOk = PureLogicTests.RunAll();
-        return VerifyModAssembly() && textOk && pureOk ? 0 : 1;
+        return VerifyModAssembly(asms) && textOk && pureOk ? 0 : 1;
     }
 
     /// <summary>곡 제목·아티스트 정규화 회귀 검사 (따옴표를 축약형으로 오인해 붙이던 문제 포함).</summary>
@@ -180,7 +180,7 @@ static class P
         return candidates.Where(File.Exists).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
     }
 
-    static bool VerifyModAssembly()
+    static bool VerifyModAssembly(List<Assembly> interopAsms)
     {
         var modPath = FindModDll();
         if (modPath == null)
@@ -257,8 +257,77 @@ static class P
         }
         int layoutFailed = VerifyFieldLayout(modAsm);
         int bodyFailed = VerifyMethodBodies(modAsm);
+        int diagFailed = VerifyDiagnosticTargets(modAsm, interopAsms);
+        int nativeFailed = VerifyNativeFields(interopAsms);
         int bmsFailed = VerifyBmsFindFor(modAsm);
-        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0 && layoutFailed == 0 && bodyFailed == 0 && bmsFailed == 0;
+        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0
+            && layoutFailed == 0 && bodyFailed == 0 && diagFailed == 0 && nativeFailed == 0 && bmsFailed == 0;
+    }
+
+    /// <summary>[Diag] DiagnosticPatches.s_targets의 문자열 타깃 5종이 실제 인터롭에 존재하는지 검증.</summary>
+    static int VerifyDiagnosticTargets(Assembly modAsm, List<Assembly> interopAsms)
+    {
+        var diagType = modAsm.GetType("PLATiNALAB.Mod.DiagnosticPatches");
+        var targets = diagType?.GetField("s_targets", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as Array;
+        if (targets == null || targets.Length == 0)
+        {
+            Console.WriteLine("   [FAIL Diag] DiagnosticPatches.s_targets를 찾지 못함");
+            return 1;
+        }
+        const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        int failed = 0;
+        foreach (var item in targets)
+        {
+            var t = item.GetType();
+            var typeName = t.GetField("Item1")?.GetValue(item) as string;
+            var methodName = t.GetField("Item2")?.GetValue(item) as string;
+            var resolved = interopAsms.Select(a => a.GetType(typeName, throwOnError: false)).FirstOrDefault(x => x != null);
+            if (resolved == null)
+            {
+                failed++;
+                Console.WriteLine($"   [FAIL Diag] 타입 없음: {typeName}");
+                continue;
+            }
+            var matches = resolved.GetMethods(any).Where(m => m.Name == methodName).ToArray();
+            if (matches.Length != 1)
+            {
+                failed++;
+                Console.WriteLine($"   [FAIL Diag] {typeName}.{methodName}: 일치 메서드 {matches.Length}개");
+            }
+        }
+        Console.WriteLine($"[Diag] 선택 진단 패치 타깃 검증: {targets.Length}개 중 실패 {failed}개");
+        return failed;
+    }
+
+    /// <summary>[NativeField] NativeField가 오프셋 직접 읽기에 쓰는 백킹 필드가 인터롭에 존재하는지 검증.</summary>
+    static int VerifyNativeFields(List<Assembly> interopAsms)
+    {
+        var expected = new (string typeName, string backingField)[]
+        {
+            ("Il2CppPlatinaLab.Main.Catalog.Scheme.Song.SongInfo", "_Id_k__BackingField"),
+            ("Il2CppPlatinaLab.Main.Catalog.Scheme.Song.PatternInfo", "_PatternIndex_k__BackingField"),
+        };
+        const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        int failed = 0;
+        foreach (var (typeName, backingField) in expected)
+        {
+            var resolved = interopAsms.Select(a => a.GetType(typeName, throwOnError: false)).FirstOrDefault(x => x != null);
+            if (resolved == null)
+            {
+                failed++;
+                Console.WriteLine($"   [FAIL NativeField] 타입 없음: {typeName}");
+                continue;
+            }
+            var ptrField = resolved.GetField("NativeFieldInfoPtr_" + backingField, any);
+            var prop = resolved.GetProperty(backingField, any);
+            if (ptrField == null && prop == null)
+            {
+                failed++;
+                Console.WriteLine($"   [FAIL NativeField] {typeName}에 {backingField} 백킹 필드 없음");
+            }
+        }
+        Console.WriteLine($"[NativeField] 네이티브 직접 읽기 백킹 필드 검증: {expected.Length}개 중 실패 {failed}개");
+        return failed;
     }
 
     /// <summary>

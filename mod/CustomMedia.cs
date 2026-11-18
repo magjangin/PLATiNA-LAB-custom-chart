@@ -160,17 +160,23 @@ internal static class CustomMedia
         return clip;
     }
 
+    private const string SetClipDataDirectHook = "CustomMedia.SetClipDataDirect";
+
     private static void SetClipData(HEAudioClip clip, byte[] bytes, AudioFormat format)
     {
         var il2cppBytes = new Il2CppStructArray<byte>(bytes);
-        try
+        if (!HookGuard.IsDisabled(SetClipDataDirectHook))
         {
-            SetClipDataDirect(clip, il2cppBytes, format);
-            return;
-        }
-        catch (Exception e)
-        {
-            Core.Log.Warning($"[CustomMedia] HEAudioClip 직접 설정 실패, 리플렉션 폴백: {e.Message}");
+            try
+            {
+                SetClipDataDirect(clip, il2cppBytes, format);
+                return;
+            }
+            catch (Exception e)
+            {
+                if (!HookGuard.Fail(SetClipDataDirectHook, e))
+                    Core.Log.Warning($"[CustomMedia] HEAudioClip 직접 설정 실패, 리플렉션 폴백: {e.Message}");
+            }
         }
         bool okBytes = UpdateResilience.SafeSetFieldOrProperty(clip, "bytes", il2cppBytes);
         bool okFormat = UpdateResilience.SafeSetFieldOrProperty(clip, "audioFormat", format);
@@ -178,7 +184,7 @@ internal static class CustomMedia
             Core.Log.Warning($"[CustomMedia] HEAudioClip 리플렉션 설정 불완전 (bytes={okBytes}, audioFormat={okFormat})");
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomMedia.SetClipDataDirect")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(SetClipDataDirectHook)]
     private static void SetClipDataDirect(HEAudioClip clip, Il2CppStructArray<byte> bytes, AudioFormat format)
     {
         clip._bytes = bytes;
@@ -323,13 +329,7 @@ internal static class CustomMedia
             s_failedCovers[path] = ticks;
 
             // 캐시 한도 초과 시 가장 오래된 텍스처/스프라이트 메모리 명시적 해제 (GPU VRAM 누수 차단)
-            while (s_covers.Count >= MaxCoverCache && s_coverLru.First != null)
-            {
-                var oldest = s_coverLru.First.Value;
-                s_coverLru.RemoveFirst();
-                if (s_covers.Remove(oldest, out var oldEntry))
-                    DestroySprite(oldEntry.Sprite);
-            }
+            EvictCoversIfFull();
         }
 
         var bytes = File.ReadAllBytes(path);
@@ -357,13 +357,7 @@ internal static class CustomMedia
                 RemoveLruNode(s_coverLru, existing.Node);
                 DestroySprite(existing.Sprite);
             }
-            while (s_covers.Count >= MaxCoverCache && s_coverLru.First != null)
-            {
-                var oldest = s_coverLru.First.Value;
-                s_coverLru.RemoveFirst();
-                if (s_covers.Remove(oldest, out var oldEntry))
-                    DestroySprite(oldEntry.Sprite);
-            }
+            EvictCoversIfFull();
             var node = s_coverLru.AddLast(path);
             s_covers[path] = new CoverEntry { Ticks = ticks, Sprite = sprite, Node = node };
             s_failedCovers.Remove(path);
@@ -371,6 +365,17 @@ internal static class CustomMedia
         }
         Core.Log.Msg($"[CustomMedia] 커버 로드: {path} ({tex.width}x{tex.height}) [캐시 {cacheCount}/{MaxCoverCache}]");
         return sprite;
+    }
+
+    private static void EvictCoversIfFull()
+    {
+        while (s_covers.Count >= MaxCoverCache && s_coverLru.First != null)
+        {
+            var oldest = s_coverLru.First.Value;
+            s_coverLru.RemoveFirst();
+            if (s_covers.Remove(oldest, out var oldEntry))
+                DestroySprite(oldEntry.Sprite);
+        }
     }
 }
 

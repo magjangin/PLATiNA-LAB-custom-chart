@@ -28,13 +28,15 @@ internal static class PlayAssist
     private static int s_autoPlayValue;
     private const string AutoPlayName = "AutoPlay";
     private const string AutoPlayHook = "PlayAssist.AutoPlay";
+    private const string IsScorableHook = "InGameSettingHelper.IsScorable";
 
     public static bool AllPerfectActive => ModConfig.AllPerfect && CustomSongs.Current != null;
 
     public static void ApplyAutoPlay()
     {
         if (!ModConfig.AutoPlay) { RestoreAutoPlay(); return; }
-        if (HookGuard.IsDisabled(AutoPlayHook)) return;
+        // IsScorable 안전장치가 사전 점검에서 깨졌으면 Extra.AutoPlay를 아예 켜지 않는다 (기록 보호 우선)
+        if (HookGuard.IsDisabled(AutoPlayHook) || HookGuard.IsDisabled(IsScorableHook)) return;
 
         bool scorable;
         string savedName;
@@ -101,7 +103,7 @@ internal static class PlayAssist
         return true;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSettingHelper.IsScorable")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(IsScorableHook)]
     private static bool ReadIsScorable() => Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper.IsScorable();
 
     public static void RestoreAutoPlay()
