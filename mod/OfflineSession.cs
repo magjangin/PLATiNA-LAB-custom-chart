@@ -118,7 +118,7 @@ internal static class InGameSurface_SendGameEnd_Patch
         try
         {
             var localRecord = BuildLocalRecord(request, patternInfo);
-            if (localRecord != null)
+            if (localRecord is not null) // 게임 record의 != 는 IL2CPP 호출 → 참조 비교
             {
                 __result = Success(localRecord);
                 Core.Log.Msg($"[OfflineSession] SendGameEnd 서버 전송 생략, 로컬 결과 반환 (score={FinalScore(request)})");
@@ -172,7 +172,7 @@ internal static class InGameSurface_SendGameEnd_Patch
         try { mastery = ComputeMastery(patternInfo, accuracy); }
         catch (Exception e) { Core.Log.Warning($"[OfflineSession] P.A.T.C.H. 계산 실패 (0으로 진행): {e.Message}"); }
 
-        if (response?.PlayResult != null)
+        if (response?.PlayResult is not null)
         {
             bool acc = UpdateResilience.SafeSetFieldOrProperty(response.PlayResult, "NormalizedAccuracy", accuracy);
             bool mas = UpdateResilience.SafeSetFieldOrProperty(response.PlayResult, "MasteryNormalized", mastery);

@@ -46,6 +46,7 @@
 ## BMS로 차트 만들기 (hwa\ 곡 폴더)
 곡 폴더에 `.bms`(또는 `.bme/.bml/.pms`)가 있으면 JSON 차트 대신 BMS를 매 플레이마다 변환해서 쓴다(게임 재시작 불필요).
 난이도별로 파일명에 난이도 이름이 들어간 BMS(`hard.bms`, `song_hard.bms` 등)를 쓰고, 없으면 이름순 첫 BMS를 쓴다.
+찾는 순서는 정확한 이름 → 정규화 이름 → 별칭(`BmsConverter.DifficultyAliases`)이며, 영문 이름·별칭은 파일명의 영문 낱말(숫자·기호·공백에서 끊음) 전체와 같아야 한다. 한글·중국어 별칭은 부분 문자열로 찾는다. (2026-11-18 전에는 부분 문자열이라 over의 별칭 `ex`가 `next_hard.bms`에 걸렸다. 회귀 검사: 하네스 `[BmsFind]`.)
 
 - 위치: `PPP position = BMS 마디 + 1 + tick / 마디 tick 수` → `time = (position - 1) × 240 / bpm`. BMS 000마디 시작 = 음원 0초.
 - 노트 종류는 `#WAV` 파일 이름으로 정한다.

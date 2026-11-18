@@ -248,11 +248,78 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - `Latest.log`에 `[Health] GameAssembly.dll 96,829,440바이트 (검증된 파일)` 한 줄. 게임 업데이트 후엔 `검증 기준 ...와 다릅니다` 경고가 `buildid` 경고와 별개로 나온다.
 - `[Init] ... 실패` 줄이 없는지 (있으면 해당 단계만 꺼진 것).
 
+## 7차 (2026-11-18): 클래스 로드 단위 의존성, 게임 record 연산자, 규칙의 기계 검사
+
+검증: Release/Debug 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 51개·`[HarmonyPatch]` 31개·`[Required]` 10개 실패 0, 신규 `[Layout]` 258개 필드·`[Body]` 386개 메서드·`[BmsFind]` 8건 실패 0. 새 검사 세 가지는 **수정 전 코드에서 각각 8·12·2건을 잡은 뒤** 수정해서 0으로 만들었다. **인게임 실기 실행은 이 빌드로 미확인** (게임 파일은 그대로: buildid 25981392, `GameAssembly.dll` 96,829,440바이트).
+
+### 새 원칙: 메서드가 아니라 클래스 단위로 깨지는 경우
+
+지금까지의 규칙(`[Guarded]` 격리)은 **메서드** JIT 실패만 다뤘다. 순수 .NET 6.0.36에서 라이브러리 타입을 지운 뒤 바꿔치기해 실측했다 (`scratchpad` 실험, 결과만 기록):
+
+| 모드 클래스의 정적 필드 | 타입이 사라진 뒤 그 클래스의 다른 정적 필드(bool)를 읽으면 |
+|---|---|
+| 게임 enum (`static L.Mode s_mode;`, 초기값 유무 무관) | `TypeLoadException` — 매번 |
+| 게임 enum을 담은 모드 struct의 `Nullable` (`static Tick? s_last;`) | `TypeLoadException` |
+| 게임 enum 배열 초기화 (`static readonly L.Mode[] a = {…}`) | `TypeInitializationException` → 이후 영구히 사용 불가 |
+| 게임 참조 타입을 제네릭 인자로 초기화 (`static readonly List<L.Ref> s = new()`) | `TypeInitializationException` |
+| 게임 참조 타입 필드 (`static L.Ref s_ref;`), 초기화 안 한 `List<L.Ref>` | 정상 |
+| 게임 참조 타입 필드를 가진 모드 클래스를 제네릭 인자로 (`Dictionary<string, Entry>`), `new Entry()` | 정상 |
+
+즉 **게임 값 타입을 필드로 들고 있는 모드 클래스는 그 타입이 바뀌면 통째로 못 쓴다.** 그 클래스의 무해한 플래그(`PlayOverlay.InPlay`, `PlayAssist.AllPerfectActive`)를 일반 곡 훅이 읽고 있으면, 훅 본문은 멀쩡해도 예외가 나서 트램펄린이 원본 대신 기본값을 돌려준다(3차 `HookGuard` 설명) — `ProcessJudgeResult`(모든 곡·모든 노트)가 그 경우였다.
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| U7-1 | `PlayAssist.s_savedExtra`, `s_autoPlayValue` | `InGameSettingType.Extra` 정적 필드. 판정 훅 2개(`ProcessJudgeResult`·`ProcessTickResult`)가 `AllPerfectActive`로 이 클래스를 건드림 | `int` 저장. 변환은 `[Guarded]` `TrySetExtraRaw`·`SetExtraDirect` 안에서만. `Save` 훅 본문·`RestoreAutoPlay`에서 게임 enum 참조 제거 |
+| U7-2 | `PlayOverlay.HitTick.Judgment`, `s_last`, `s_pending`, `s_history`, `Judgments`, `s_mode` | `JudgmentType`·`LineModeType`. `InPlay`를 판정 훅·`Core.OnUpdate`(매 프레임)가 읽음 | `int` 저장. `JudgeColor`/`JudgeName`은 `(int)JudgmentType.X` 상수 비교(컴파일 시 숫자, 타입 로드 없음). 맵 조회는 `[Guarded] LoadRanges` 안에서 변환 |
+
+### 게임 record의 `==` / `!=`
+
+`SongInfo`·`PatternInfo`·`PlayResult`·`FreeModePlayRecordV2` 등은 게임 쪽 C# record라 인터롭이 `op_Equality`를 만들고, 그 본문은 `il2cpp_runtime_invoke`다(`src_dummy` `SongInfo.cs` 확인). 그래서 `song == null`이 **IL2CPP 왕복**이 되고, 연산자가 바뀌면 그 메서드가 JIT에서 실패한다.
+
+| # | 위치 | 영향 | 수정 |
+|---|---|---|---|
+| P7-1 | `CustomSongs.IsCustomSong` (`song == null`) | 주입 후 모든 곡의 `IsLock`/`IsAvailable`/`IsNotOwned`/`IsHiddenFromDefaultList`/`IsNewSongMarkTarget`마다 1회 — 5차에서 게터 호출을 없앤 바로 그 경로에 남아 있던 runtime invoke | `is null` |
+| P7-2 | `CustomSongs.Of` (`info == null`), `GetPatternFileName` Postfix (`__instance == null`) | 모든 패턴의 파일명 조회마다 1~2회 | `is null` |
+| P7-3 | `ReadVanillaKey`, `Inject`, `IsPreferredBaseSongDirect`, `CreateState`, `SendGameEnd` Prefix·`BuildLocalRecord` | 곡/플레이당 몇 회 (성능보다 의존성 문제) | `is null` / `is not null` |
+
+`?.`·`??`는 참조 검사로 컴파일되므로 해당 없다. Unity `Object`의 `==`(파괴된 객체 판정)는 의도된 동작이고 엔진 타입이라 검사 대상이 아니다.
+
+### "같은 메서드 안의 try"가 남아 있던 곳
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| U7-3 | `CustomSongs.ReadValidDifficulties` | `_difficultyTypeInfos` 직접 참조와 `try`가 같은 메서드 → 필드가 사라지면 기본 난이도 폴백에 도달하지 못하고 `Inject` 전체(= 커스텀 곡 주입) 실패. 4차 문서의 "격리 + 폴백"은 실제로 동작하지 않았음 | `ReadDifficultyKeysDirect`로 분리 |
+| U7-4 | `CustomSongs.RegisterSongMeta` | 같은 구조. `[Guarded]`라 사전 점검은 했지만 `Inject`가 감싸지 않아 실행 시엔 주입 전체 실패 | `RegisterSongMetaDirect`로 분리, 실패 시 경고 후 계속 |
+| U7-5 | `CustomSongs.IsPreferredBaseSong` | 같은 구조 (`ESDProduct` 등이 사라지면 주입 전체 실패) | `IsPreferredBaseSongDirect`로 분리, 실패 시 선호 조건만 포기 |
+| U7-6 | `GetDataSet` 폴백 `CreateFallback`·`TextResource`, `ForcePerfect` | catch가 있는데 게임 타입을 직접 씀 | 보고용 이름으로 `[Guarded]` (시작 시 사전 JIT 점검) |
+
+### 규칙의 기계 검사 (`tools/interop-harness`)
+
+사람이 읽어서 지키던 규칙을 하네스가 모드 DLL을 읽어 확인한다. 게임 어셈블리 = 인터롭 폴더의 어셈블리 중 `UnityEngine*`·`Unity.*`·`Il2Cppmscorlib`·`Il2CppSystem*`·`Il2CppMono*`를 뺀 것 (엔진·BCL은 Unity 버전이 같으면 바뀌지 않음).
+
+- **`[Layout]`**: 모든 모드 타입의 필드(정적·인스턴스)가 게임 값 타입(Nullable·값 튜플·모드 struct 안 포함)이거나, 게임 타입을 제네릭 인자·배열 요소로 쓰면 실패.
+- **`[Body]`** (IL 읽기, `Module.ResolveMember`): ① 모든 메서드에서 게임 타입의 `op_Equality`/`op_Inequality` 호출 ② 훅 진입점(Prefix/Postfix/Finalizer)이 게임 타입·멤버를 직접 참조(자기 시그니처에 이미 있는 타입의 box/stobj 같은 타입 토큰은 제외 — 그 타입이 없으면 패치가 먼저 실패) ③ catch가 있는 비`[Guarded]` 메서드가 게임 멤버를 직접 참조. enum 상수는 IL에 숫자로 들어가므로 잡히지 않는다(= 실제로 타입 로드도 없음).
+- **`[BmsFind]`**: 아래 B7-1 회귀.
+
+### 정확성
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| B7-1 | `BmsConverter.FindFor` | 난이도 별칭을 파일명 부분 문자열로 찾아 `over`의 `ex`가 `next_hard.bms`에, `plus`의 `sp`가 `space.bms`에 걸림. 파일 순서가 별칭 순서보다 앞서 `a_ez.bms`가 `b_easy.bms`보다 먼저 선택됨 | 영문 별칭은 낱말(영문 글자 덩어리) 단위, 한글·중국어는 부분 문자열. 정확한 이름 → 정규화 이름 → 별칭 순 |
+| B7-2 | `ModConfig.Load` | 기본값으로 초기화한 **뒤에** 파일을 읽어서, 편집기가 저장하는 순간 읽기가 실패하면 로그는 "이전 값 유지"인데 실제로는 기본값(예: `AutoPlay` 꺼짐) | 끝까지 읽은 뒤 초기화·적용 |
+| B7-3 | `CustomSongs.Scan` | 한 곡 폴더의 읽기 예외가 스캔 전체를 실패시켜 커스텀 곡이 하나도 안 나옴 | 폴더별 `try`. 번호(곡 ID·패턴 번호)는 폴더 순서 그대로 두고 실패한 번호만 비움 (당기면 다른 곡의 ID가 바뀜) |
+
+### 확인 항목 (인게임)
+
+- `[HookGuard] 훅 바인딩 사전 점검 정상 (51개 메서드, …)`.
+- 선곡 화면 custom 카테고리 곡 표시·잠금 없음, 일반 곡 잠금 표시 그대로 (P7-1·P7-2 경로).
+- 커스텀 곡 플레이: 판정바·키뷰어 색과 글자(`PERFECT HIGH` 등), 올 퍼펙트, 오토 플레이 켬/끔 로그(`[AutoPlay] 끔 → Extra=Off`처럼 이름으로 찍히는지), 결과 화면.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
 3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `Failed to HarmonyInit PatchAll`도 검색한다.
-   - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT 및 `[HarmonyPatch]` 타깃 실패 0을 확인한다.
+   - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요, 종료 코드 0이면 통과): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT·`[HarmonyPatch]` 타깃·`[Required]` 실패 0, `[Layout]`·`[Body]` 실패 0을 확인한다. 업데이트로 게임 enum이 struct가 되거나 record가 아니게 되는 등 "재빌드 없이 돌던 모드가 클래스째 깨지는" 변화는 `[Layout]`·`[Body]`가 새 인터롭 기준으로 다시 잡는다.
 4. 검증 기준 빌드를 `ModHealth.TestedBuildId`와 `TestedGameAssemblySize`(= `GameAssembly.dll` 바이트 수)에 갱신한다. 필수 패치 목록(`s_requiredPatches`)을 바꿨다면 하네스 `[Required]`가 통과하는지도 본다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

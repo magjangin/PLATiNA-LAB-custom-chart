@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 오프라인 점검: 게임 실행 없이 MelonLoader 인터롭 어셈블리로 InteropNames(람다/컴파일러 생성 판별)와 Locate 탐색을 검증 -->
+  <!-- 오프라인 점검: 게임 실행 없이 MelonLoader 인터롭 어셈블리로 InteropNames(람다/컴파일러 생성 판별)·Locate 탐색과 빌드된 모드 DLL의 업데이트 내성 규칙을 검증 -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net6.0</TargetFramework>

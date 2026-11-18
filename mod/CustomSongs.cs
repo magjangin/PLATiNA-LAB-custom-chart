@@ -277,7 +277,8 @@ internal static class CustomSongs
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternInfo.PatternIndex", required: true)]
     public static CustomChart Of(PatternInfo info)
     {
-        if (info == null || s_byPatternIndex.Count == 0) return null;
+        // SongInfo·PatternInfo는 게임 record라 `== null`이 인터롭에서 op_Equality(il2cpp_runtime_invoke)가 된다 → `is null` (하네스 [Body] 검사)
+        if (info is null || s_byPatternIndex.Count == 0) return null;
         if (s_patternIndexField.TryReadInt32(info.Pointer, out int native))
         {
             if (!s_patternIndexField.NeedsSelfCheck) return ByPatternIndex(native);
@@ -299,7 +300,7 @@ internal static class CustomSongs
     /// </summary>
     public static bool IsCustomSong(SongInfo song)
     {
-        if (!Injected || song == null || HookGuard.IsDisabled(SongIdHook)) return false;
+        if (!Injected || song is null || HookGuard.IsDisabled(SongIdHook)) return false;
         try
         {
             if (s_songIdField.TryReadPointer(song.Pointer, out var idPtr))
@@ -339,7 +340,13 @@ internal static class CustomSongs
             folders.Add(sample);
         }
         All.Clear();
-        for (int i = 0; i < folders.Count; i++) All.Add(CustomSong.Load(folders[i], i + 1));
+        // 곡 번호(= 곡 ID·패턴 번호)는 폴더 순서로 정한다. 한 폴더를 못 읽어도 번호를 비워 두고 나머지 곡은 그대로 넣는다
+        // (예전에는 한 곡의 info.txt 읽기 예외가 Scan 전체를 실패시켜 커스텀 곡이 하나도 안 나왔다. 번호를 당기면 다른 곡의 ID가 바뀐다).
+        for (int i = 0; i < folders.Count; i++)
+        {
+            try { All.Add(CustomSong.Load(folders[i], i + 1)); }
+            catch (Exception e) { Core.Log.Error($"[CustomSongs] 곡 폴더 '{Path.GetFileName(folders[i])}' 읽기 실패, 이 곡만 건너뜁니다: {e.Message}"); }
+        }
         var byId = new Dictionary<string, CustomSong>(StringComparer.Ordinal);
         var byIndex = new Dictionary<int, CustomChart>();
         var byKey = new Dictionary<string, CustomChart>(StringComparer.Ordinal);
@@ -396,10 +403,10 @@ internal static class CustomSongs
             }
         }
         basePattern ??= fallback;
-        if (basePattern == null) { Core.Log.Warning($"[CustomSongs] 기반 패턴 {BasePatternKey} 없음"); return; }
+        if (basePattern is null) { Core.Log.Warning($"[CustomSongs] 기반 패턴 {BasePatternKey} 없음"); return; }
 
         var baseSong = basePattern.FindSongInfo();
-        if (baseSong == null) { Core.Log.Warning("[CustomSongs] 기반 곡 SongInfo 없음"); return; }
+        if (baseSong is null) { Core.Log.Warning("[CustomSongs] 기반 곡 SongInfo 없음"); return; }
         s_baseSong = baseSong;
         s_baseSongId = baseSong.Id;
         s_baseFileName = basePattern.GetPatternFileName();
@@ -472,50 +479,70 @@ internal static class CustomSongs
         Injected = true;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    // 아래 세 곳은 실패해도 주입을 계속할 수 있는 선택 경로다. 게임 멤버 접근은 *Direct 메서드로 빼고 여기서 try로 감싼다.
+    // 예전에는 try가 같은 메서드 안에 있어서, 멤버가 사라지면 JIT 단계 예외가 그 try를 건너뛰고 Inject 전체(= 커스텀 곡 주입)를 실패시켰다.
+
     private static bool IsPreferredBaseSong(PatternInfo p)
     {
-        try
+        try { return IsPreferredBaseSongDirect(p); }
+        catch (Exception e)
         {
-            var s = p.FindSongInfo();
-            return s != null && s.LockTypeString == "none" && s.ESDProduct == "default";
+            HookGuard.Fail("CustomSongs.IsPreferredBaseSong", e); // 기반 곡 선호 조건만 포기 (FilePath가 맞는 첫 패턴 사용)
+            return false;
         }
-        catch { return false; }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.IsPreferredBaseSong")]
+    private static bool IsPreferredBaseSongDirect(PatternInfo p)
+    {
+        var s = p.FindSongInfo();
+        return s is not null && s.LockTypeString == "none" && s.ESDProduct == "default";
+    }
+
+    /// <summary>실측 키(2026-10-30). _difficultyTypeInfos를 못 읽을 때 쓴다.</summary>
+    private static readonly string[] DefaultDifficulties = { "easy", "hard", "over", "plus", "testpattern" };
+
     private static List<string> ReadValidDifficulties(SongDataManager mgr)
     {
         var valid = new List<string>();
-        try
-        {
-            if (mgr._difficultyTypeInfos != null)
-                foreach (var kv in mgr._difficultyTypeInfos) valid.Add(kv.Key);
-        }
+        try { ReadDifficultyKeysDirect(mgr, valid); }
         catch (Exception e)
         {
+            HookGuard.Fail("CustomSongs.ReadDifficultyKeys", e);
+            valid.Clear();
             Core.Log.Warning($"[CustomSongs] _difficultyTypeInfos 읽기 실패, 기본 난이도 목록 사용: {e.Message}");
         }
-        if (valid.Count == 0) valid.AddRange(new[] { "easy", "hard", "over", "plus", "testpattern" });
+        if (valid.Count == 0) valid.AddRange(DefaultDifficulties);
         return valid;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.RegisterSongMeta")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.ReadDifficultyKeys")]
+    private static void ReadDifficultyKeysDirect(SongDataManager mgr, List<string> into)
+    {
+        var infos = mgr._difficultyTypeInfos;
+        if (infos == null) return;
+        foreach (var kv in infos) into.Add(kv.Key);
+    }
+
     private static void RegisterSongMeta(SongDataManager mgr, CustomSong custom, string baseSongId)
     {
-        try
-        {
-            var metas = mgr._songMetaData;
-            if (metas == null || metas.ContainsKey(custom.Id)) return;
-            var baseMeta = metas.ContainsKey(baseSongId) ? metas[baseSongId] : null;
-            var meta = new SongMetaDataInfo();
-            PopulateSongMeta(meta, baseMeta, custom);
-            metas.Add(custom.Id, meta);
-        }
+        try { RegisterSongMetaDirect(mgr, custom, baseSongId); }
         catch (Exception e)
         {
+            HookGuard.Fail("CustomSongs.RegisterSongMeta", e);
             Core.Log.Warning($"[CustomSongs] _songMetaData 등록 실패 ({custom.Id}): {e.Message}");
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.RegisterSongMeta")]
+    private static void RegisterSongMetaDirect(SongDataManager mgr, CustomSong custom, string baseSongId)
+    {
+        var metas = mgr._songMetaData;
+        if (metas == null || metas.ContainsKey(custom.Id)) return;
+        var baseMeta = metas.ContainsKey(baseSongId) ? metas[baseSongId] : null;
+        var meta = new SongMetaDataInfo();
+        PopulateSongMeta(meta, baseMeta, custom);
+        metas.Add(custom.Id, meta);
     }
 
     private static void PopulateSongMeta(SongMetaDataInfo meta, SongMetaDataInfo baseMeta, CustomSong custom)
@@ -728,7 +755,7 @@ internal static class PatternInfo_GetPatternFileName_Patch
     private static void Postfix(PatternInfo __instance, ref string __result)
     {
         var baseName = CustomSongs.s_baseFileName;
-        if (baseName == null || __instance == null || HookGuard.IsDisabled(Hook)) return;
+        if (baseName == null || __instance is null || HookGuard.IsDisabled(Hook)) return;
         try
         {
             if (!CustomSongs.IsCustom(__instance)) return;
@@ -861,7 +888,8 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
         return ds;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    // 폴백 경로도 게임 타입을 직접 쓴다. 보고용 이름으로 [Guarded]를 달아 시작 시 사전 JIT로 점검만 한다 (IsDisabled로 끄지 않음).
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("SongCategoryResourceCollection.CreateFallback")]
     private static SongCategoryResourceDataSet CreateFallback(SongCategoryResourceCollection collection)
     {
         var donor = collection.GetDataSet(DonorKey);
@@ -894,6 +922,7 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
         return ds;
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("SongCategoryResourceCollection.TextResource")]
     private static CategoryResource TextResource()
     {
         var r = new CategoryResource();
@@ -977,7 +1006,7 @@ internal static class PatternPlayer_DetermineRunning_HoldEnd_Patch
     private static HoldState CreateState(Il2CppPlatinaLab.Main.InGame.PatternPlayer player, IntPtr ptr)
     {
         var pattern = player.PlayPattern;
-        if (pattern == null) return null; // 패턴이 아직 안 정해짐 → "일반 곡"으로 굳히지 않고 다음 호출에서 다시 확인
+        if (pattern is null) return null; // 패턴이 아직 안 정해짐 → "일반 곡"으로 굳히지 않고 다음 호출에서 다시 확인
         if (!CustomSongs.IsCustom(pattern)) return new HoldState(ptr, false, 0);
         var data = player._patternData;
         if (data == null) return null;

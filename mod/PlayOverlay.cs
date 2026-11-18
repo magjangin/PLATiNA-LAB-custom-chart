@@ -30,14 +30,17 @@ internal static class PlayOverlay
     public static volatile bool InPlay;
 
     // ---------------- 판정바 상태 ----------------
-    private struct HitTick { public float OffsetMs; public float Time; public JudgmentType Judgment; }
+    // 게임 enum(JudgmentType·LineModeType)은 int로 저장한다. 게임 값 타입을 필드로 두면 그 타입이 바뀌거나 사라질 때 PlayOverlay 클래스 자체가
+    // 로드되지 않아(TypeLoadException, 순수 .NET 6 실측) InPlay를 읽는 판정 훅(모든 곡)까지 예외가 난다. enum 상수 비교는 컴파일 시 숫자라 타입 로드가 없다.
+    // 하네스 [Layout] 검사가 이 규칙을 확인한다.
+    private struct HitTick { public float OffsetMs; public float Time; public int Judgment; }
     private static readonly object s_lock = new();
     private static readonly List<HitTick> s_pending = new();
     private static readonly List<HitTick> s_history = new();
     private static HitTick? s_last;
     private const float Duration = 1.5f;
 
-    private static readonly JudgmentType[] Judgments = { JudgmentType.PerfectHigh, JudgmentType.Perfect, JudgmentType.Great, JudgmentType.Good };
+    private static readonly int[] Judgments = { (int)JudgmentType.PerfectHigh, (int)JudgmentType.Perfect, (int)JudgmentType.Great, (int)JudgmentType.Good };
     // 범위 (ms, 앞/뒤 중 큰 값). JudgmentTimingMap을 못 읽었을 때의 폴백 (실측 PerfectHigh ±25 / Perfect ±50 / Great ±80 / Good ±120)
     private static readonly float[] RangeMs = { 25f, 50f, 80f, 120f };
     private static bool s_rangeLoaded;
@@ -49,7 +52,7 @@ internal static class PlayOverlay
     private static bool[] s_pressed = Array.Empty<bool>();
     private static bool[] s_pressedBuffer = Array.Empty<bool>(); // GC allocation 방지용 재사용 버퍼
     private static int s_pitchIndex = -1;
-    private static LineModeType s_mode = LineModeType.None;
+    private static int s_mode = (int)LineModeType.None;
 
     // ---------------- UI ----------------
     private static GameObject s_root;
@@ -82,7 +85,7 @@ internal static class PlayOverlay
     public static void Reset()
     {
         lock (s_lock) { s_pending.Clear(); s_history.Clear(); s_last = null; }
-        lock (s_keyLock) { s_laneOfKey = null; s_mode = LineModeType.None; s_pressed = Array.Empty<bool>(); s_labels = Array.Empty<string>(); }
+        lock (s_keyLock) { s_laneOfKey = null; s_mode = (int)LineModeType.None; s_pressed = Array.Empty<bool>(); s_labels = Array.Empty<string>(); }
         // 곡 시작마다 설정 파일을 다시 읽으므로(색·모양·위치) 그리기 캐시도 비운다
         s_barLayoutValid = false;
         s_keyLayoutValid = false;
@@ -97,7 +100,7 @@ internal static class PlayOverlay
         {
             // 메인 스레드가 비우지 못하는 상황(창 비활성 등)에서도 무한히 쌓이지 않게 오래된 것부터 버린다
             if (s_pending.Count >= MaxPending) s_pending.RemoveAt(0);
-            s_pending.Add(new HitTick { OffsetMs = (float)-error, Judgment = judgment, Time = -1f });
+            s_pending.Add(new HitTick { OffsetMs = (float)-error, Judgment = (int)judgment, Time = -1f });
         }
     }
 
@@ -270,13 +273,14 @@ internal static class PlayOverlay
             if (map == null) return;
             for (int i = 0; i < Judgments.Length; i++)
             {
-                if (!map.ContainsKey(Judgments[i])) continue;
-                var tuple = map[Judgments[i]];
+                var judgment = (JudgmentType)Judgments[i];
+                if (!map.ContainsKey(judgment)) continue;
+                var tuple = map[judgment];
                 if (tuple == null || tuple.Pointer == IntPtr.Zero) continue;
                 var data = (double*)IL2CPP.il2cpp_object_unbox(tuple.Pointer);
                 if (data == null) continue;
                 double early = data[0], late = data[1];
-                text.Append($"{Judgments[i]}=({early},{late}) ");
+                text.Append($"{judgment}=({early},{late}) ");
                 loaded[i] = (float)Math.Max(Math.Abs(early), Math.Abs(late));
             }
             // 값이 정상적이면 덮어쓰기
@@ -287,22 +291,22 @@ internal static class PlayOverlay
         catch (Exception e) { Core.Log.Warning($"[JudgmentBar] JudgmentTimingMap 읽기 실패, 기본값 사용: {e.Message}"); }
     }
 
-    private static Color JudgeColor(JudgmentType j) => j switch
+    private static Color JudgeColor(int j) => j switch
     {
-        JudgmentType.PerfectHigh => new Color(1f, 1f, 1f),
-        JudgmentType.Perfect => new Color(0.35f, 0.75f, 1f),
-        JudgmentType.Great => new Color(1f, 0.8f, 0.2f),
-        JudgmentType.Good => new Color(0.4f, 0.9f, 0.4f),
+        (int)JudgmentType.PerfectHigh => new Color(1f, 1f, 1f),
+        (int)JudgmentType.Perfect => new Color(0.35f, 0.75f, 1f),
+        (int)JudgmentType.Great => new Color(1f, 0.8f, 0.2f),
+        (int)JudgmentType.Good => new Color(0.4f, 0.9f, 0.4f),
         _ => new Color(1f, 0.3f, 0.4f),
     };
 
-    private static string JudgeName(JudgmentType j) => j switch
+    private static string JudgeName(int j) => j switch
     {
-        JudgmentType.PerfectHigh => "PERFECT HIGH",
-        JudgmentType.Perfect => "PERFECT",
-        JudgmentType.Great => "GREAT",
-        JudgmentType.Good => "GOOD",
-        _ => j.ToString().ToUpperInvariant(),
+        (int)JudgmentType.PerfectHigh => "PERFECT HIGH",
+        (int)JudgmentType.Perfect => "PERFECT",
+        (int)JudgmentType.Great => "GREAT",
+        (int)JudgmentType.Good => "GOOD",
+        _ => $"JUDGE {j}", // 판정바에는 타이밍 판정만 들어온다 (ProcessJudgeResult에서 Miss·Undefined 제외)
     };
 
     private static void UpdateJudgmentBar()
@@ -471,7 +475,7 @@ internal static class PlayOverlay
             var mode = player.LineMode;
             lock (s_keyLock)
             {
-                if (s_laneOfKey == null || s_mode != mode)
+                if (s_laneOfKey == null || s_mode != (int)mode)
                 {
                     if (HookGuard.IsDisabled("PlayOverlay.BindKeys")) return;
                     try { BindKeys(mode); }
@@ -490,7 +494,7 @@ internal static class PlayOverlay
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("PlayOverlay.BindKeys")]
     private static void BindKeys(LineModeType mode)
     {
-        s_mode = mode;
+        s_mode = (int)mode;
         s_laneOfKey = new Dictionary<ushort, int>();
         var keys = InputStateMachine.GetKeyBindingArray(mode);
         int count = keys?.Length ?? 0;

@@ -83,7 +83,12 @@ internal static class BmsConverter
         return AliasToDifficulty.TryGetValue(lower, out var canonical) ? canonical : lower;
     }
 
-    /// <summary>난이도에 쓸 BMS: 파일명에 난이도 이름 또는 별칭(다국어)이 들어간 것 → 없으면 이름순 첫 BMS.</summary>
+    /// <summary>
+    /// 난이도에 쓸 BMS: 파일명에 난이도 이름 또는 별칭(다국어)이 들어간 것 → 없으면 이름순 첫 BMS.
+    /// 별칭 순서(정확한 이름 → 정규화 이름 → 별칭)가 우선순위다. 영문 별칭은 파일명의 낱말(영문 글자 덩어리, 숫자·기호에서 끊음) 단위로만 맞춘다:
+    /// 예전에는 부분 문자열이라 over의 별칭 "ex"가 "next_hard.bms"에, plus의 "sp"가 "space.bms"에 걸렸다.
+    /// 한글·중국어 별칭은 낱말 경계가 없으므로 부분 문자열로 찾는다.
+    /// </summary>
     public static string FindFor(string folder, string difficulty)
     {
         var files = Directory.GetFiles(folder)
@@ -91,17 +96,33 @@ internal static class BmsConverter
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var aliases = GetDifficultyAliases(difficulty);
-        foreach (var f in files)
-        {
-            var fileName = System.IO.Path.GetFileNameWithoutExtension(f);
-            foreach (var alias in aliases)
-            {
-                if (fileName.Contains(alias, StringComparison.OrdinalIgnoreCase))
+        foreach (var alias in GetDifficultyAliases(difficulty))
+            foreach (var f in files)
+                if (NameHasAlias(System.IO.Path.GetFileNameWithoutExtension(f), alias))
                     return f;
+        return files.FirstOrDefault();
+    }
+
+    internal static bool NameHasAlias(string fileName, string alias)
+    {
+        if (string.IsNullOrEmpty(alias)) return false;
+        bool ascii = true;
+        foreach (var c in alias) if (c > 0x7F) { ascii = false; break; }
+        if (!ascii) return fileName.Contains(alias, StringComparison.OrdinalIgnoreCase);
+        // 영문 낱말 단위: "song_hard2" → song, hard / "hwa2[EZ]" → hwa, EZ. 대소문자 경계(songHard)는 나누지 않는다.
+        int start = -1;
+        for (int i = 0; i <= fileName.Length; i++)
+        {
+            bool word = i < fileName.Length && fileName[i] < 0x80 && char.IsLetter(fileName[i]);
+            if (word && start < 0) start = i;
+            else if (!word && start >= 0)
+            {
+                if (i - start == alias.Length && string.Compare(fileName, start, alias, 0, alias.Length, StringComparison.OrdinalIgnoreCase) == 0)
+                    return true;
+                start = -1;
             }
         }
-        return files.FirstOrDefault();
+        return false;
     }
 
     private static IEnumerable<string> GetDifficultyAliases(string diff)

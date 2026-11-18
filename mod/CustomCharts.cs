@@ -103,7 +103,7 @@ internal static class CustomCharts
     private static string ReadVanillaKey(PatternPlayer player)
     {
         var info = player?.PlayPattern;
-        if (info == null) return null;
+        if (info is null) return null;
         var raw = info.FilePath;
         if (string.IsNullOrEmpty(raw)) raw = info.GetPatternFileName();
         if (string.IsNullOrEmpty(raw)) return null;

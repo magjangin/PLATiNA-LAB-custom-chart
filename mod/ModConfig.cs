@@ -96,9 +96,12 @@ KeyViewerPitchPressedColor=#FF4081E6
             long ticks = File.GetLastWriteTimeUtc(path).Ticks;
             if (ticks == s_lastWriteTicks) return;
 
+            // 먼저 끝까지 읽고 나서 초기화한다. 편집기가 저장하는 중이라 읽기가 실패하면(공유 위반 등) 이전 값을 그대로 둔다.
+            // (예전에는 초기화 뒤에 읽어서, 읽기 실패 시 로그는 "이전 값 유지"인데 실제로는 기본값 — 예: AutoPlay가 꺼짐 — 이 됐다)
+            var lines = EncodingHelper.ReadAllLinesSafe(path);
             // 파일에서 지운 줄은 기본값으로 돌아가야 한다 (예전에는 이전에 읽은 값이 게임을 끌 때까지 남았다)
             ResetToDefaults();
-            foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
+            foreach (var raw in lines)
             {
                 var line = raw.Trim().TrimStart('﻿');
                 if (line.Length == 0 || line.StartsWith("#") || line.StartsWith("//")) continue;

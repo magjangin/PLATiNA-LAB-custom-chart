@@ -21,9 +21,11 @@ namespace PLATiNALAB.Mod;
 /// </summary>
 internal static class PlayAssist
 {
-    private static bool s_overriding;
-    private static InGameSettingType.Extra s_savedExtra;
-    private static InGameSettingType.Extra s_autoPlayValue;
+    private static volatile bool s_overriding;
+    // Extra 값은 int로 저장한다. 게임 enum을 정적 필드로 두면 그 타입이 바뀌거나 사라질 때 PlayAssist 클래스가 로드되지 않아
+    // (TypeLoadException, 순수 .NET 6 실측) AllPerfectActive를 읽는 판정 훅이 모든 곡에서 예외를 낸다. 변환은 [Guarded] 메서드 안에서만 한다.
+    private static int s_savedExtra;
+    private static int s_autoPlayValue;
     private const string AutoPlayName = "AutoPlay";
     private const string AutoPlayHook = "PlayAssist.AutoPlay";
 
@@ -56,8 +58,8 @@ internal static class PlayAssist
             return;
         }
 
-        var savedBefore = s_overriding ? s_savedExtra : currentExtra;
-        s_autoPlayValue = autoPlay;
+        int savedBefore = s_overriding ? s_savedExtra : (int)currentExtra;
+        s_autoPlayValue = (int)autoPlay;
         try
         {
             if (!TrySetExtra(autoPlay)) return;
@@ -85,7 +87,7 @@ internal static class PlayAssist
             RestoreAutoPlay();
             return;
         }
-        Core.Log.Msg($"[AutoPlay] 켬 (원래 Extra={s_savedExtra})");
+        Core.Log.Msg($"[AutoPlay] 켬 (원래 Extra={(InGameSettingType.Extra)s_savedExtra})");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded(AutoPlayHook)]
@@ -107,6 +109,15 @@ internal static class PlayAssist
         return true;
     }
 
+    /// <summary>RestoreAutoPlay(나가기·씬 종료 경로)가 게임 enum을 직접 참조하지 않도록 변환까지 여기서 한다.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(AutoPlayHook)]
+    private static bool TrySetExtraRaw(int raw, out string name)
+    {
+        var value = (InGameSettingType.Extra)raw;
+        name = value.ToString();
+        return TrySetExtra(value);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSettingHelper.IsScorable")]
     private static bool ReadIsScorable() => Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper.IsScorable();
 
@@ -117,8 +128,8 @@ internal static class PlayAssist
         if (HookGuard.IsDisabled(AutoPlayHook)) return;
         try
         {
-            if (TrySetExtra(s_savedExtra))
-                Core.Log.Msg($"[AutoPlay] 끔 → Extra={s_savedExtra}");
+            if (TrySetExtraRaw(s_savedExtra, out var name))
+                Core.Log.Msg($"[AutoPlay] 끔 → Extra={name}");
         }
         catch (Exception e)
         {
@@ -161,7 +172,7 @@ internal static class PlayAssist
 
         private static void Postfix(InGameSettingManager __instance) => Set(__instance, s_autoPlayValue);
 
-        private static void Set(InGameSettingManager manager, InGameSettingType.Extra value)
+        private static void Set(InGameSettingManager manager, int value)
         {
             if (!s_overriding || manager == null || HookGuard.IsDisabled(Hook)) return;
             try { SetExtraDirect(manager, value); }
@@ -169,7 +180,7 @@ internal static class PlayAssist
         }
 
         [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSettingManager.Save")]
-        private static void SetExtraDirect(InGameSettingManager manager, InGameSettingType.Extra value) => manager.Extra?.SetExtra(value);
+        private static void SetExtraDirect(InGameSettingManager manager, int value) => manager.Extra?.SetExtra((InGameSettingType.Extra)value);
     }
 
     [HarmonyPatch(typeof(PatternPlayer), nameof(PatternPlayer.ProcessJudgeResult))]
@@ -220,6 +231,7 @@ internal static class PlayAssist
         /// 1차: 프로퍼티 세터 직접 호출. 2차(세터가 없어졌거나 실패): 이름 기반 리플렉션.
         /// 예전에는 노트마다 두 경로를 모두 실행했다 (같은 세터를 두 번 호출, 리플렉션 비용).
         /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternPlayer.ProcessJudgeResult")] // 리플렉션 폴백이 JudgmentType을 박싱한다
         private static void ForcePerfect(JudgeResult judgeResult)
         {
             try

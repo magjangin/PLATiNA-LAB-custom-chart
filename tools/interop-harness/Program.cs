@@ -1,5 +1,5 @@
 // 오프라인 인터롭 하네스 — 게임을 실행하지 않고 MelonLoader가 만든 인터롭 어셈블리로 검증한다.
-//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수, 모드 [Guarded]/[HarmonyPatch] 검증
+//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수, 모드 [Guarded]/[HarmonyPatch]/[Required]/[Layout]/[Body]/[BmsFind] 검증 (종료 코드 0 = 통과)
 //   dotnet run -c Release -- explore : 컴파일러 생성 타입의 멤버(프로퍼티) 이름 빈도 (멤버 모양 신호 조사용)
 // 정답 기준: 인터롭 [ObfuscatedName]의 원래 이름(마지막 중첩 이름)에 '<'가 있거나, 이름에 '<'가 그대로 남은 타입.
 // 게임 경로는 환경 변수 PLATINALAB_GAME, 모드 DLL 경로는 PLATINALAB_MOD로 바꿀 수 있다.
@@ -254,7 +254,243 @@ static class P
                 }
             Console.WriteLine($"[Required] 필수 패치 이름 대조: {required.Length}개 중 실패 {requiredFailed}개");
         }
-        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0;
+        int layoutFailed = VerifyFieldLayout(modAsm);
+        int bodyFailed = VerifyMethodBodies(modAsm);
+        int bmsFailed = VerifyBmsFindFor(modAsm);
+        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0 && layoutFailed == 0 && bodyFailed == 0 && bmsFailed == 0;
+    }
+
+    /// <summary>
+    /// [BmsFind] 난이도별 BMS 선택 회귀 (BmsConverter.FindFor를 빈 임시 폴더에서 리플렉션으로 호출, 게임 의존 없음).
+    /// 예전 부분 문자열 매칭은 over의 별칭 "ex"가 "next_hard.bms"에 걸려 hard 차트를 over로 썼다.
+    /// </summary>
+    static int VerifyBmsFindFor(Assembly modAsm)
+    {
+        var find = modAsm.GetType("PLATiNALAB.Mod.BmsConverter")?.GetMethod("FindFor", BindingFlags.Public | BindingFlags.Static);
+        if (find == null) { Console.WriteLine("   [FAIL BmsFind] BmsConverter.FindFor 없음"); return 1; }
+        var cases = new (string[] files, string difficulty, string expected)[]
+        {
+            (new[] { "hwa2.bms" }, "easy", "hwa2.bms"),                                   // 이름 매칭 없음 → 첫 BMS
+            (new[] { "next_hard.bms", "song_over.bms" }, "over", "song_over.bms"),        // "ex"가 next에 걸리면 안 됨
+            (new[] { "space.bms", "song_sp.bms" }, "plus", "song_sp.bms"),                // "sp"가 space에 걸리면 안 됨
+            (new[] { "a_ez.bms", "b_easy.bms" }, "easy", "b_easy.bms"),                   // 정확한 이름이 별칭보다 우선
+            (new[] { "song[EZ].bms", "song[HD].bms" }, "hard", "song[HD].bms"),
+            (new[] { "song_hard2.bme", "song_easy2.bme" }, "hard", "song_hard2.bme"),     // 숫자에서 낱말을 끊음
+            (new[] { "曲_简单.bms", "曲_困难.bms" }, "hard", "曲_困难.bms"),                 // 중국어 별칭은 부분 문자열
+            (new[] { "곡 하드.bms", "곡 이지.bms" }, "easy", "곡 이지.bms"),
+        };
+        int failed = 0;
+        foreach (var (files, difficulty, expected) in cases)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "platinalab-harness-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                foreach (var f in files) File.WriteAllText(Path.Combine(dir, f), "");
+                var actual = find.Invoke(null, new object[] { dir, difficulty }) as string;
+                if (Path.GetFileName(actual ?? "") == expected) continue;
+                failed++;
+                Console.WriteLine($"   [FAIL BmsFind] {difficulty} in [{string.Join(", ", files)}] → '{Path.GetFileName(actual ?? "")}' (기대 '{expected}')");
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+        }
+        Console.WriteLine($"[BmsFind] 난이도별 BMS 선택 {cases.Length}건 중 실패 {failed}건");
+        return failed;
+    }
+
+    // ---------------- IL 검사: 훅 본문 직접 참조 / 같은 메서드 try ----------------
+
+    static readonly Dictionary<short, System.Reflection.Emit.OpCode> OpCodesByValue =
+        typeof(System.Reflection.Emit.OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Select(f => (System.Reflection.Emit.OpCode)f.GetValue(null)).ToDictionary(o => o.Value);
+
+    /// <summary>메서드 IL이 직접 참조하는 게임(인터롭) 타입·멤버 이름. 상수(enum 값)는 IL에 숫자로 들어가므로 잡히지 않는다(= 타입 로드 없음).</summary>
+    static List<string> GameReferences(MethodBase m)
+    {
+        var result = new List<string>();
+        byte[] il;
+        try { il = m.GetMethodBody()?.GetILAsByteArray(); } catch { return result; }
+        if (il == null) return result;
+        Type[] typeArgs = m.DeclaringType?.IsGenericType == true ? m.DeclaringType.GetGenericArguments() : null;
+        Type[] methodArgs = m.IsGenericMethod ? m.GetGenericArguments() : null;
+        int i = 0;
+        while (i < il.Length)
+        {
+            short value = il[i] == 0xFE && i + 1 < il.Length ? (short)(0xFE00 | il[i + 1]) : il[i];
+            if (!OpCodesByValue.TryGetValue(value, out var op)) break;
+            i += op.Size;
+            switch (op.OperandType)
+            {
+                case System.Reflection.Emit.OperandType.InlineMethod:
+                case System.Reflection.Emit.OperandType.InlineField:
+                case System.Reflection.Emit.OperandType.InlineType:
+                case System.Reflection.Emit.OperandType.InlineTok:
+                {
+                    int token = BitConverter.ToInt32(il, i);
+                    try
+                    {
+                        var member = m.Module.ResolveMember(token, typeArgs, methodArgs);
+                        var owner = member as Type ?? member.DeclaringType;
+                        if (owner != null && MentionsGameType(owner, new HashSet<Type>()))
+                            result.Add(member is Type ? owner.FullName : $"{owner.Name}.{member.Name}");
+                    }
+                    catch { }
+                    i += 4;
+                    break;
+                }
+                case System.Reflection.Emit.OperandType.InlineNone: break;
+                case System.Reflection.Emit.OperandType.ShortInlineBrTarget:
+                case System.Reflection.Emit.OperandType.ShortInlineI:
+                case System.Reflection.Emit.OperandType.ShortInlineVar: i += 1; break;
+                case System.Reflection.Emit.OperandType.InlineVar: i += 2; break;
+                case System.Reflection.Emit.OperandType.InlineI8:
+                case System.Reflection.Emit.OperandType.InlineR: i += 8; break;
+                case System.Reflection.Emit.OperandType.InlineSwitch: i += 4 + BitConverter.ToInt32(il, i) * 4; break;
+                default: i += 4; break;
+            }
+        }
+        return result.Distinct().ToList();
+    }
+
+    static bool MentionsGameType(Type t, HashSet<Type> seen)
+    {
+        if (t.IsByRef || t.IsPointer || t.IsArray) t = t.GetElementType();
+        if (t == null || t.IsGenericParameter || !seen.Add(t)) return false;
+        if (IsGameAssembly(t.Assembly)) return true;
+        return t.IsGenericType && t.GetGenericArguments().Any(a => MentionsGameType(a, seen));
+    }
+
+    static bool HasAttribute(MemberInfo m, string name) =>
+        m.GetCustomAttributesData().Any(d => d.AttributeType.Name == name || d.AttributeType.Name == name + "Attribute");
+
+    /// <summary>
+    /// [Body] 두 규칙을 IL로 확인한다.
+    ///   1. 훅 진입점(Prefix/Postfix/Finalizer)은 게임 타입·멤버를 직접 참조하지 않는다 — 참조가 깨지면 훅 본문 JIT가 실패하고,
+    ///      Il2CppInterop 트램펄린이 예외를 삼켜 원본 대신 기본값을 돌려주므로 일반 곡까지 그 게임 메서드가 망가진다 (HookGuard 설명).
+    ///   2. catch가 있는 메서드가 게임 멤버를 직접 참조하면 그 catch는 바인딩 실패를 못 잡는다 (JIT 단계 예외, .NET 6 실측).
+    ///      [Guarded] 메서드는 호출부가 감싸고 시작 시 사전 JIT로 점검하므로 제외한다.
+    /// </summary>
+    static int VerifyMethodBodies(Assembly modAsm)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        int hooks = 0, tries = 0, methods = 0, failed = 0;
+        foreach (var type in InteropNames.SafeGetTypes(modAsm))
+        {
+            bool patchClass = HasAttribute(type, "HarmonyPatch");
+            foreach (var m in type.GetMethods(flags).Cast<MethodBase>().Concat(type.GetConstructors(flags)))
+            {
+                if (m.IsAbstract || m.GetMethodBody() == null) continue;
+                methods++;
+                // 3. 게임 record(SongInfo·PatternInfo 등)의 ==/!= 는 인터롭에서 il2cpp_runtime_invoke다. `x == null`이 모든 곡 판정마다 IL2CPP 왕복이 되고,
+                //    연산자가 업데이트로 사라지면 그 메서드가 JIT에서 실패한다 → `is null` / `is not null` (참조 비교, 타입 로드·호출 없음).
+                var ops = GameReferences(m).Where(r => r.EndsWith(".op_Equality") || r.EndsWith(".op_Inequality")).ToList();
+                if (ops.Count > 0)
+                {
+                    failed++;
+                    Console.WriteLine($"   [FAIL Body] {type.FullName}.{m.Name}: 게임 타입의 ==/!= 연산자 호출 (IL2CPP 호출, `is null` 사용): {string.Join(", ", ops)}");
+                }
+
+                bool entry = (patchClass || type.Name == "AddressableKeyRedirect") && m.Name is "Prefix" or "Postfix" or "Finalizer";
+                bool guarded = HasAttribute(m, "Guarded");
+                bool hasCatch = m.GetMethodBody().ExceptionHandlingClauses.Any(c => c.Flags != ExceptionHandlingClauseOptions.Finally);
+                if (!entry && !(hasCatch && !guarded)) continue;
+                // 자기 시그니처(인자·반환)에 이미 있는 게임 타입을 box/stobj 등 타입 토큰으로 쓰는 것은 새 의존성이 아니다
+                // (그 타입이 없으면 패치·호출 자체가 먼저 실패한다). 멤버(메서드·필드) 참조는 여전히 검사한다.
+                var own = new HashSet<string>(SignatureTypes(m).Select(t => t.FullName));
+                var refs = GameReferences(m).Where(r => !own.Contains(r) && !r.EndsWith(".op_Equality") && !r.EndsWith(".op_Inequality")).ToList();
+                if (entry) hooks++; else tries++;
+                if (refs.Count == 0) continue;
+                failed++;
+                var rule = entry ? "훅 본문이 게임 멤버를 직접 참조" : "catch가 있는 비[Guarded] 메서드가 게임 멤버를 직접 참조 (그 catch는 바인딩 실패를 못 잡음)";
+                Console.WriteLine($"   [FAIL Body] {type.FullName}.{m.Name}: {rule}: {string.Join(", ", refs.Take(6))}");
+            }
+        }
+        Console.WriteLine($"[Body] 메서드 {methods}개(==/!= 연산자), 훅 본문 {hooks}개, catch 있는 비[Guarded] 메서드 {tries}개 검사, 실패 {failed}개");
+        return failed;
+    }
+
+    static IEnumerable<Type> SignatureTypes(MethodBase m)
+    {
+        var types = m.GetParameters().Select(p => p.ParameterType).ToList();
+        if (m is MethodInfo mi) types.Add(mi.ReturnType);
+        foreach (var t in types)
+        {
+            var e = t;
+            while (e != null && (e.IsByRef || e.IsPointer || e.IsArray)) e = e.GetElementType();
+            if (e != null) yield return e;
+        }
+    }
+
+    /// <summary>
+    /// 모드 타입의 필드가 게임 타입에 묶여 있는지 검사한다 ([Layout]).
+    /// 실측(순수 .NET 6.0.36, 타입을 지운 라이브러리로 바꿔치기):
+    ///   - 게임 값 타입(enum·struct, Nullable·모드 struct 안에 든 것 포함)을 필드로 가진 클래스는 처음 접근할 때 TypeLoadException → 클래스 전체를 못 쓴다.
+    ///   - 정적 필드 초기화에서 게임 타입을 제네릭 인자·배열 요소로 쓰면(new List&lt;게임타입&gt;() 등) TypeInitializationException → 영구히 못 쓴다.
+    ///   - 게임 참조 타입 필드(SongInfo 등)와, 그런 필드를 가진 모드 클래스를 제네릭 인자로 쓰는 것은 문제없다.
+    /// 그래서 이런 필드를 가진 클래스를 일반 곡 훅(판정·입력·OnUpdate)이 건드리면 업데이트 한 번에 모든 곡의 그 게임 메서드가 망가진다.
+    /// 게임 값은 int로 저장하고 쓰는 곳(격리 메서드)에서 변환한다.
+    /// </summary>
+    static int VerifyFieldLayout(Assembly modAsm)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        int fields = 0, failed = 0;
+        foreach (var type in InteropNames.SafeGetTypes(modAsm))
+        {
+            // 컴파일러가 만든 클로저·상태 머신은 그 메서드가 실행될 때만 로드된다 (메서드 자체는 [Guarded]/JIT 검사 대상)
+            if (type.Name.Contains('<') || type.GetCustomAttribute<CompilerGeneratedAttribute>() != null) continue;
+            foreach (var f in type.GetFields(flags))
+            {
+                if (f.Name.Contains('<') && !f.Name.Contains("k__BackingField")) continue;
+                fields++;
+                var reason = GameTypeDependency(f.FieldType, viaGeneric: false, new HashSet<Type>());
+                if (reason == null) continue;
+                failed++;
+                Console.WriteLine($"   [FAIL Layout] {type.FullName}.{f.Name} : {reason}");
+            }
+        }
+        Console.WriteLine($"[Layout] 게임 타입에 묶인 모드 필드 검사: {fields}개 중 실패 {failed}개");
+        return failed;
+    }
+
+    /// <summary>게임(인터롭) 어셈블리 중 엔진·BCL이 아닌 것. Unity 엔진·Il2Cpp BCL은 Unity 버전이 같으면 바뀌지 않는다.</summary>
+    static bool IsGameAssembly(Assembly a)
+    {
+        string loc;
+        try { loc = a.Location; } catch { return false; }
+        if (string.IsNullOrEmpty(loc) || !string.Equals(Path.GetDirectoryName(loc), Interop, StringComparison.OrdinalIgnoreCase)) return false;
+        var n = a.GetName().Name ?? "";
+        return !(n.StartsWith("UnityEngine") || n.StartsWith("Unity.") || n == "Il2Cppmscorlib" || n.StartsWith("Il2CppSystem") || n.StartsWith("Il2CppMono"));
+    }
+
+    /// <summary>
+    /// 필드 타입이 레이아웃·초기화 단계에서 게임 타입을 로드해야 하면 그 이유를, 아니면 null.
+    /// viaGeneric: 제네릭 인자·배열 요소 안 (참조 타입이어도 인스턴스를 만들 때 로드된다).
+    /// </summary>
+    static string GameTypeDependency(Type t, bool viaGeneric, HashSet<Type> seen)
+    {
+        if (t.IsByRef || t.IsPointer) t = t.GetElementType();
+        if (t == null || t.IsGenericParameter || !seen.Add(t)) return null;
+        if (t.IsArray) return GameTypeDependency(t.GetElementType(), true, seen);
+        if (IsGameAssembly(t.Assembly))
+        {
+            if (viaGeneric) return $"게임 타입 {t.FullName}을 제네릭 인자/배열 요소로 사용 (초기화 시 TypeInitializationException)";
+            if (t.IsValueType) return $"게임 값 타입 {t.FullName} (클래스 로드 시 TypeLoadException)";
+            return null;
+        }
+        if (t.IsGenericType)
+            foreach (var arg in t.GetGenericArguments())
+            {
+                var r = GameTypeDependency(arg, true, seen);
+                if (r != null) return r;
+            }
+        // 모드·BCL 값 타입(Nullable, 값 튜플, 모드 struct)은 필드까지 펼쳐 본다. 참조 타입의 필드는 그 객체를 만들 때만 문제가 된다.
+        if (t.IsValueType && !t.IsPrimitive && !t.IsEnum)
+            foreach (var inner in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                var r = GameTypeDependency(inner.FieldType, viaGeneric, seen);
+                if (r != null) return r;
+            }
+        return null;
     }
 
     static readonly HashSet<string> PatchedKeys = new();

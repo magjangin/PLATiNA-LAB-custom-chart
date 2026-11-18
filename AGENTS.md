@@ -16,7 +16,7 @@
   - `H:\source\repos\PLATiNA LAB-unity-il2cpp\src_dummy\Main` (`Il2CppPlatinaLab.Main.dll`)
   - `H:\source\repos\PLATiNA LAB-unity-il2cpp\src_dummy\DataModel` (`Il2CppPlatinaLab.DataModel.dll`)
 - **실행 로그:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\logs\`
-- **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 람다 판별·Locate 후보를 게임 없이 검증)
+- **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과. 람다 판별·Locate 후보·`[Guarded]` JIT·`[HarmonyPatch]` 타깃·필수 패치 이름·필드 레이아웃·훅 본문 IL·BMS 파일 선택을 게임 없이 검증)
 - **후킹 후보 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
 - **업데이트 내성 감사 & 게임 업데이트 후 확인 순서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
@@ -130,6 +130,13 @@
   - **Rationale:** 이 프로젝트는 `.acf` 패치 차단·DepotDownloader를 쓰므로 Steam 매니페스트 `buildid`가 실제 파일과 다를 수 있다 → `ModHealth`가 `GameAssembly.dll` 실제 크기(`TestedGameAssemblySize`, 현재 96,829,440)도 검증 기준과 비교한다. 게임 파일 버전을 올려 재검증하면 `TestedBuildId`와 함께 갱신할 것.
   - `Core.OnInitializeMelon`은 설정·차트·곡 스캔·Locate 패치를 `Step()`으로 각각 격리(한 단계 실패가 나머지를 막지 않음). 하네스는 `ModHealth.s_requiredPatches` 문자열이 실제 `[HarmonyPatch]` 타깃과 일치하는지 대조한다 — 필수 패치를 추가·이름 변경하면 하네스를 돌릴 것.
 
+- **클래스 단위 의존성 · 게임 record 연산자 · 규칙의 기계 검사 (2026-11-18, 상세 `docs/update_resilience_audit.md` "7차"):** 오프라인 검증만(Release/Debug 빌드 경고·오류 0, 하네스 종료 코드 0: `[Guarded]` 51·`[HarmonyPatch]` 31·`[Required]` 10·`[Layout]` 258·`[Body]` 386·`[BmsFind]` 8 실패 0). 게임 파일 변화 없음(buildid·`GameAssembly.dll` 크기 동일). **인게임 미확인.**
+  - **규칙 — 모드 클래스는 게임 값 타입(enum·struct)을 필드로 들지 않는다:** 순수 .NET 6.0.36 실측으로, 게임 enum 정적 필드(Nullable·모드 struct 안 포함)를 가진 클래스는 그 타입이 바뀌면 클래스 전체가 `TypeLoadException`, 정적 초기화에서 게임 타입을 제네릭 인자·배열 요소로 쓰면 `TypeInitializationException`(영구). 참조 타입 필드는 무관. `PlayOverlay.InPlay`·`PlayAssist.AllPerfectActive`를 판정 훅(모든 곡)이 읽고 있어서 훅이 통째로 망가질 수 있었다 → 게임 enum은 `int`로 저장하고 변환은 `[Guarded]` 메서드에서만. enum **상수** 비교(`(int)JudgmentType.Good`)는 컴파일 시 숫자라 안전.
+  - **규칙 — 게임 record에 `== null` 쓰지 않기:** `SongInfo`·`PatternInfo`·`PlayResult`·`FreeModePlayRecordV2` 등은 게임 C# record라 인터롭 `op_Equality`가 `il2cpp_runtime_invoke`다. `IsCustomSong`(모든 곡 잠금 판정)·`GetPatternFileName` Postfix 등에 남아 있던 9곳을 `is null`/`is not null`로.
+  - **"같은 메서드 안의 try" 잔존 3곳 수정:** `ReadValidDifficulties`(4차 문서의 "격리+폴백"이 실제로는 도달 불가였음), `RegisterSongMeta`, `IsPreferredBaseSong` → `*Direct` 분리. 실패해도 커스텀 곡 주입은 계속.
+  - **하네스 신규 검사:** `[Layout]`(필드 타입), `[Body]`(IL을 읽어 ① 게임 `op_Equality`/`op_Inequality` 호출 ② 훅 진입점의 게임 멤버 직접 참조 ③ catch가 있는 비`[Guarded]` 메서드의 게임 멤버 직접 참조), `[BmsFind]`. 수정 전 코드에서 각각 8·12·2건을 잡았다. 새 코드를 쓰면 하네스를 돌릴 것(종료 코드 0이면 통과).
+  - **버그:** `BmsConverter.FindFor`가 난이도 별칭을 부분 문자열로 찾아 `over`의 `ex`가 `next_hard.bms`에 걸림 → 영문은 낱말 단위, 정확한 이름 우선. `ModConfig.Load`가 기본값 초기화 후 읽어서 읽기 실패 시 설정이 꺼짐(로그는 "이전 값 유지") → 다 읽은 뒤 초기화. `CustomSongs.Scan`은 곡 폴더별 격리(번호는 폴더 순서 유지).
+
 ---
 
 ## 4. 핵심 후킹 타깃 클래스 & 메서드 시그니처
@@ -171,7 +178,10 @@
 - **`InGameSettingHelper.IsAutoPlayMode` / `InputStateMachine.Interpret` 패치:** 둘 다 호출부에 인라인돼 직접 호출 없음 → 설정값 자체를 바꾸거나(`SetExtra`) 직접 호출되는 `ProcessInputEvent`를 후킹.
 - **이전 세션 `xrefs.py`(E8 호출 탐색)가 아무것도 못 찾음:** `.text` 섹션만 훑었는데 GameAssembly 코드는 다른 실행 섹션에 있음 → 실행 가능(0x20000000) 섹션 전부를 훑어야 함.
 - **게임 exe 직접 실행:** `PlatformInitializationFailedException: Failed to initialize steam sdk` 후 종료 → `steam://run/3430470//-screen-fullscreen 0 -screen-width 1600 -screen-height 900/`로 Steam 경유 실행.
-- **`record`/`record struct` 사용 (2026-11-14):** `<Nullable>disable</Nullable>`이어도 레코드 합성 멤버가 `NullableAttribute`를 요구해 CS0656 → 일반 클래스나 값 튜플 + 유효 플래그로 대체.
+- **`record`/`record struct` 사용 (2026-11-14):** `<Nullable>disable</Nullable>`이어도 레코드 합성 멤버가 `NullableAttribute`를 요구해 CS0656 → 일반 클래스나 값 튜플 + 유효 플래그로 대체. 단 기존 `BmsConverter.BmsObject`(`readonly record struct`, 위치 인자만)는 빌드된다 — CS0656이 나는 정확한 조건은 미확인이므로 새로 쓸 때는 빌드로 확인.
+- **게임 enum을 모드 클래스 필드에 그대로 저장 (2026-11-18 수정):** 업데이트로 그 enum이 바뀌면 필드가 있는 클래스 전체가 로드 불가(실측) → 그 클래스의 무관한 플래그를 읽는 일반 곡 훅까지 예외. `int`로 저장. 하네스 `[Layout]`이 검사한다.
+- **게임 record 객체에 `== null` (2026-11-18 수정):** 인터롭이 record의 `op_Equality`를 IL2CPP 호출로 만든다 → 핫패스마다 runtime invoke. `is null`. 하네스 `[Body]`가 검사한다.
+- **BMS 난이도 파일을 별칭 부분 문자열로 찾기 (2026-11-18 수정):** 2글자 별칭(`ex`, `sp`, `ez`, `hd`)이 `next`, `space` 같은 낱말 안에 걸린다 → 영문은 낱말 단위.
 - **사용자가 PC를 쓰는 중에 게임 창으로 입력 보내기:** 서버 랭킹이 있는 온라인 게임이라 입력이 엉뚱한 화면에 들어갈 수 있다. `um win drive ... idle`이 1분 미만이면 입력을 보내지 말고 사용자에게 맡긴다(2026-11-14 idle 2.6초 → 중단).
 - **모드 프로젝트 Nullable enable 빌드:** `CS0656: System.Runtime.CompilerServices.NullableContextAttribute..ctor` 컴파일 오류 발생 → `<Nullable>disable</Nullable>`로 전환하여 해결.
 
@@ -190,6 +200,7 @@
 - **GitHub:** https://github.com/magjangin/PLATiNA-LAB-custom-chart (public). `dummy_dll/`, `src_dummy/`, `slices/`(게임 추출물), `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외 — 공개 저장소에 게임 바이너리/디컴파일 코드를 올리지 않는다.
 
 ## 7. 다음 단계 (미구현)
+- **2026-11-18 빌드(7차) 인게임 확인:** `[HookGuard] 훅 바인딩 사전 점검 정상 (51개 메서드…)`, 선곡 화면 custom 곡 잠금 없음·일반 곡 잠금 그대로, 커스텀 곡 플레이에서 판정바 색·글자(`PERFECT HIGH` 등)·키뷰어·올 퍼펙트, 오토 플레이 복원 로그가 이름으로 찍히는지(`Extra=Off`), 결과 화면. 아래 11-14·11-15 빌드 항목과 함께 한 번에 확인 가능.
 - **2026-11-15 빌드(네이티브 필드 읽기) 인게임 확인:** `[Native] SongInfo.Id / PatternInfo.PatternIndex 직접 읽기 자체 검증 32건 일치` 로그, `관리 경로로 전환` 경고 없음, custom 카테고리 곡 잠금 없음·일반 곡 잠금 표시 그대로, 커스텀 곡 클리어 연출 타이밍(재도전 포함).
 - **2026-11-14 빌드(훅 격리·병목 수정) 인게임 확인:** 선곡 화면 커버·미리듣기 키 치환, 커스텀 곡 플레이(차트/BGM/BGA, 판정바·키뷰어·올 퍼펙트), 결과 화면, 일반 곡 1곡 플레이·결과 전송. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`과 `바인딩 실패로 꺼진 훅` 없음 확인.
 - 오토 플레이 인게임 확인(`IsScorable` 안전장치 포함). 키뷰어가 플레이 화면 하단 섹션 패널과 겹침 → 위치 조정 검토. 일시정지 화면 위에도 오버레이가 그려짐.

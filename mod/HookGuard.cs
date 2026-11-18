@@ -15,6 +15,11 @@ namespace PLATiNALAB.Mod;
 ///   - 바인딩 실패(MissingMember/TypeLoad/BadImageFormat): 그 훅을 꺼서 게임 원본 동작만 남긴다 (매 호출 예외 반복 방지).
 ///     필수 훅이면 커스텀 곡 주입도 끈다.
 ///   - 그 밖의 예외: 훅은 유지하고 같은 예외는 한 번만 경고한다.
+///
+/// 같은 이유로 지키는 규칙 두 가지 (2026-11-18, tools/interop-harness의 [Layout]·[Body]가 빌드된 DLL을 읽어 검사):
+///   - 모드 클래스는 게임 값 타입(enum·struct)을 필드로 들지 않는다. 그 타입이 바뀌면 클래스 전체가 로드되지 않아
+///     (TypeLoadException, 순수 .NET 6 실측) 그 클래스의 무관한 플래그를 읽는 훅까지 예외가 난다 → int로 저장.
+///   - 게임 record(SongInfo·PatternInfo 등)에 `== null`을 쓰지 않는다. 인터롭 op_Equality = il2cpp_runtime_invoke → `is null`.
 /// </summary>
 internal static class HookGuard
 {
