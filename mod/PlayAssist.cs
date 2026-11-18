@@ -35,77 +35,57 @@ internal static class PlayAssist
     {
         if (!ModConfig.AutoPlay) { RestoreAutoPlay(); return; }
         if (HookGuard.IsDisabled(AutoPlayHook)) return;
-        // enum 상수는 컴파일 시 숫자로 박히므로, 게임이 값을 재배치해도 맞도록 런타임에 이름으로 찾는다
-        if (!Enum.TryParse(AutoPlayName, out InGameSettingType.Extra autoPlay))
-        {
-            Core.Log.Error($"[AutoPlay] Extra.{AutoPlayName} 값을 찾지 못해 끕니다");
-            RestoreAutoPlay();
-            return;
-        }
 
-        InGameSettingType.Extra currentExtra;
-        try
-        {
-            if (!TryGetCurrentExtra(out currentExtra))
-            {
-                Core.Log.Warning("[AutoPlay] InGameSettingManager 없음");
-                return;
-            }
-        }
-        catch (Exception e)
-        {
-            HookGuard.Fail(AutoPlayHook, e);
-            return;
-        }
-
-        int savedBefore = s_overriding ? s_savedExtra : (int)currentExtra;
-        s_autoPlayValue = (int)autoPlay;
-        try
-        {
-            if (!TrySetExtra(autoPlay)) return;
-        }
-        catch (Exception e)
-        {
-            HookGuard.Fail(AutoPlayHook, e);
-            return;
-        }
-        s_savedExtra = savedBefore;
-        s_overriding = true;
-
-        // 기록 보호는 게임의 IsScorable()이 맡는다. 기록이 남는 상태거나 확인할 수 없으면 오토 플레이를 쓰지 않는다
         bool scorable;
-        try { scorable = ReadIsScorable(); }
+        string savedName;
+        try
+        {
+            if (!TryEnableAutoPlayDirect(out savedName)) return;
+            scorable = ReadIsScorable();
+        }
         catch (Exception e)
         {
-            Core.Log.Error($"[AutoPlay] IsScorable 확인 실패로 끕니다: {e.Message}");
+            if (!HookGuard.Fail(AutoPlayHook, e))
+                Core.Log.Error($"[AutoPlay] 적용 실패로 끕니다: {e.Message}");
             RestoreAutoPlay();
             return;
         }
+
         if (scorable)
         {
             Core.Log.Error("[AutoPlay] 오토 플레이 상태인데 기록이 남는 설정으로 확인되어 끕니다");
             RestoreAutoPlay();
             return;
         }
-        Core.Log.Msg($"[AutoPlay] 켬 (원래 Extra={(InGameSettingType.Extra)s_savedExtra})");
+        Core.Log.Msg($"[AutoPlay] 켬 (원래 Extra={savedName})");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded(AutoPlayHook)]
-    private static bool TryGetCurrentExtra(out InGameSettingType.Extra current)
+    private static bool TryEnableAutoPlayDirect(out string savedName)
     {
-        current = default;
-        var extra = InGameSettingManager.Instance?.Extra;
-        if (extra == null) return false;
-        current = extra.Extra;
-        return true;
-    }
+        savedName = null;
+        // enum 상수는 컴파일 시 숫자로 박히므로, 게임이 값을 재배치해도 맞도록 런타임에 이름으로 찾는다
+        if (!Enum.TryParse(AutoPlayName, out InGameSettingType.Extra autoPlay))
+        {
+            Core.Log.Error($"[AutoPlay] Extra.{AutoPlayName} 값을 찾지 못해 끕니다");
+            RestoreAutoPlay();
+            return false;
+        }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded(AutoPlayHook)]
-    private static bool TrySetExtra(InGameSettingType.Extra value)
-    {
         var extra = InGameSettingManager.Instance?.Extra;
-        if (extra == null) return false;
-        extra.SetExtra(value);
+        if (extra == null)
+        {
+            Core.Log.Warning("[AutoPlay] InGameSettingManager 없음");
+            return false;
+        }
+
+        var currentExtra = extra.Extra;
+        int savedBefore = s_overriding ? s_savedExtra : (int)currentExtra;
+        s_autoPlayValue = (int)autoPlay;
+        extra.SetExtra(autoPlay);
+        s_savedExtra = savedBefore;
+        s_overriding = true;
+        savedName = ((InGameSettingType.Extra)s_savedExtra).ToString();
         return true;
     }
 
@@ -115,7 +95,10 @@ internal static class PlayAssist
     {
         var value = (InGameSettingType.Extra)raw;
         name = value.ToString();
-        return TrySetExtra(value);
+        var extra = InGameSettingManager.Instance?.Extra;
+        if (extra == null) return false;
+        extra.SetExtra(value);
+        return true;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("InGameSettingHelper.IsScorable")]

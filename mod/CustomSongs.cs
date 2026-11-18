@@ -113,6 +113,7 @@ internal sealed class CustomSong
                         song.Patterner = TextSanitizer.Sanitize(value); break;
                     case "레인": case "lanes":
                     case "轨道": case "键位": case "按键":
+                        song.Lanes.Clear();
                         song.Lanes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                             .Select(x => x.Trim().ToUpperInvariant()));
                         break;
@@ -267,6 +268,7 @@ internal static class CustomSongs
     private static Dictionary<string, CustomSong> s_byId = new();
     private static Dictionary<int, CustomChart> s_byPatternIndex = new();
     private static Dictionary<string, CustomChart> s_byKey = new();
+    private static CustomSong[] s_songsByIdLengthDesc = Array.Empty<CustomSong>();
 
     public static bool IsCustomId(string songId) => songId != null && songId.StartsWith(IdPrefix, StringComparison.Ordinal);
     public static CustomSong ById(string songId) => songId != null && s_byId.TryGetValue(songId, out var s) ? s : null;
@@ -274,15 +276,15 @@ internal static class CustomSongs
     /// <summary>
     /// 문자열(리소스 키 등)에 든 커스텀 곡 ID. 가장 긴 ID를 고른다 — 곡이 1000개를 넘으면
     /// "hwa_1000"이 "hwa_100"도 포함하므로 처음 맞는 것을 쓰면 다른 곡으로 치환된다.
+    /// Scan()에서 ID 길이 내림차순 배열을 미리 만들어 두므로 첫 매치에서 바로 반환한다.
     /// </summary>
     public static CustomSong FindIdIn(string text)
     {
         if (string.IsNullOrEmpty(text)) return null;
-        CustomSong best = null;
-        foreach (var s in All)
-            if (s.Id != null && (best == null || s.Id.Length > best.Id.Length) && text.Contains(s.Id, StringComparison.Ordinal))
-                best = s;
-        return best;
+        foreach (var s in s_songsByIdLengthDesc)
+            if (s.Id != null && text.Contains(s.Id, StringComparison.Ordinal))
+                return s;
+        return null;
     }
     public static CustomChart ByPatternIndex(int index) => s_byPatternIndex.TryGetValue(index, out var c) ? c : null;
 
@@ -363,14 +365,16 @@ internal static class CustomSongs
         // 곡 번호(= 곡 ID·패턴 번호)를 UserData\PLATiNALAB\song_ids.json에 폴더명 기준으로 영속화해,
         // 새 폴더를 추가하거나 앞의 폴더를 지워도 기존 곡의 hwa_NNN·PatternIndex가 밀리지 않게 한다.
         var idMap = LoadSongIdMap();
+        var usedNumbers = new HashSet<int>();
         int nextNumber = idMap.Count > 0 ? idMap.Values.Max() + 1 : 1;
         bool mapDirty = false;
         foreach (var folder in folders)
         {
             var name = Path.GetFileName(folder);
-            if (!idMap.TryGetValue(name, out var number))
+            if (!idMap.TryGetValue(name, out var number) || !usedNumbers.Add(number))
             {
                 number = nextNumber++;
+                usedNumbers.Add(number);
                 idMap[name] = number;
                 mapDirty = true;
             }
@@ -393,6 +397,7 @@ internal static class CustomSongs
         s_byId = byId;
         s_byPatternIndex = byIndex;
         s_byKey = byKey;
+        s_songsByIdLengthDesc = All.OrderByDescending(s => s.Id?.Length ?? 0).ToArray();
         foreach (var s in All)
             Core.Log.Msg($"[CustomSongs] {s.Id} '{s.Title}' ({Path.GetFileName(s.Folder)}) music={s.MusicPath != null} video={s.VideoPath != null} cover={s.ThumbnailPath != null} charts=[{string.Join(", ", s.Charts.Select(c => $"{c.Difficulty}:{c.Level}{(c.BmsPath != null ? $"(BMS {Path.GetFileName(c.BmsPath)})" : File.Exists(c.ChartPath) ? "" : "(템플릿)")}"))}]");
     }

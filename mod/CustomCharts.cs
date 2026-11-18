@@ -90,10 +90,21 @@ internal static class CustomCharts
     private const string CustomKeyHook = "PatternParser.Parse.CustomKey";
     private const string VanillaKeyHook = "PatternParser.Parse.VanillaKey";
 
+    private const long CustomFilesCacheTtlMs = 5000;
+    private static long s_customFilesCheckedAt = long.MinValue;
+    private static volatile bool s_hasCustomFiles;
+
     private static bool HasCustomChartFiles()
     {
-        try { return Directory.Exists(CustomDir) && Directory.EnumerateFiles(CustomDir, "*.json").Any(); }
-        catch { return false; }
+        long now = Environment.TickCount64;
+        if (now - Volatile.Read(ref s_customFilesCheckedAt) < CustomFilesCacheTtlMs)
+            return s_hasCustomFiles;
+        bool has;
+        try { has = Directory.Exists(CustomDir) && Directory.EnumerateFiles(CustomDir, "*.json").Any(); }
+        catch { has = false; }
+        s_hasCustomFiles = has;
+        Volatile.Write(ref s_customFilesCheckedAt, now);
+        return has;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded(CustomKeyHook, required: true)]

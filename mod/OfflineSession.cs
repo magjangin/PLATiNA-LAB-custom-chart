@@ -237,7 +237,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("OfflineSession.EnsureSectionRecords")]
     private static void EnsureSectionRecords(GameEndResult request)
     {
-        if (request != null && request.SectionRecords == null)
+        if (request is not null && request.SectionRecords is null)
             request.SectionRecords = new Il2CppReferenceArray<SectionRecord>(0);
     }
 

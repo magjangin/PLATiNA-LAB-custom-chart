@@ -283,8 +283,16 @@ internal static class PlayOverlay
                 text.Append($"{judgment}=({early},{late}) ");
                 loaded[i] = (float)Math.Max(Math.Abs(early), Math.Abs(late));
             }
-            // 값이 정상적이면 덮어쓰기
-            bool sane = loaded.All(v => v > 1f && v < 1000f) && loaded.Zip(loaded.Skip(1), (a, b) => a <= b).All(x => x);
+            // 값이 정상적이면 덮어쓰기 (1ms < v < 1000ms, 단조 비감소)
+            bool sane = true;
+            for (int i = 0; i < loaded.Length; i++)
+            {
+                if (loaded[i] <= 1f || loaded[i] >= 1000f || (i > 0 && loaded[i - 1] > loaded[i]))
+                {
+                    sane = false;
+                    break;
+                }
+            }
             if (sane) Array.Copy(loaded, RangeMs, RangeMs.Length);
             Core.Log.Msg($"[JudgmentBar] 판정 범위: {text}{(sane ? "" : "→ 비정상, 기본값 사용")}");
         }

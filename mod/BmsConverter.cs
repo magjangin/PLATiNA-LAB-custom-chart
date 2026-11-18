@@ -286,10 +286,19 @@ internal static class BmsConverter
         // 끝이 없는 홀드는 단노트로
         foreach (var s in openHold.Values.Concat(openLnType.Values)) { notes.Add((s.pos, null, s.lane)); unpaired++; }
 
+        notes.Sort((a, b) =>
+        {
+            int cmp = a.start.CompareTo(b.start);
+            return cmp != 0 ? cmp : a.key.CompareTo(b.key);
+        });
+
         var noteArray = new JsonArray();
         double last = bgmPosition;
-        foreach (var n in notes.OrderBy(n => n.start).ThenBy(n => n.key))
+        int holds = 0, pitches = 0;
+        foreach (var n in notes)
         {
+            if (n.end != null) holds++;
+            if (n.key == PitchKey) pitches++;
             last = Math.Max(last, n.end ?? n.start);
             noteArray.Add(new JsonObject
             {
@@ -303,23 +312,24 @@ internal static class BmsConverter
             });
         }
 
-        // BPM 변경: 03(16진 정수), 08(#BPMxx 참조)
+        // BPM 변경: 03(16진 정수), 08(#BPMxx 참조). 0 이하 비정상 BPM은 무시(0으로 나누기 방지).
         var bpms = new JsonObject();
+        bool hasStop = false;
         foreach (var o in bms.Objects)
         {
+            if (o.Channel == "09") { hasStop = true; continue; }
             double? bpm = o.Channel == "03" && int.TryParse(o.Value, NumberStyles.HexNumber, null, out var hex) ? hex
                 : o.Channel == "08" && bms.BpmTable.TryGetValue(o.Value, out var t) ? t : null;
-            if (bpm != null) bpms[o.Position.ToString("R", CultureInfo.InvariantCulture)] = bpm;
+            if (bpm > 0) bpms[o.Position.ToString("R", CultureInfo.InvariantCulture)] = bpm.Value;
         }
 
         if (bms.MeterChanges.Count > 0)
             Core.Log.Warning($"[BMS] {log}: 박자 변경(#mmm02, 마디 {string.Join(",", bms.MeterChanges.OrderBy(m => m))})은 미지원 → 4/4로 변환");
-        if (bms.Objects.Any(o => o.Channel == "09"))
+        if (hasStop)
             Core.Log.Warning($"[BMS] {log}: STOP(09)은 미지원 → 무시");
         if (unpaired > 0)
             Core.Log.Warning($"[BMS] {log}: 짝이 맞지 않는 롱노트 오브젝트 {unpaired}개 (끝 없는 시작은 단노트로, 시작 없는 끝은 무시)");
 
-        int holds = notes.Count(n => n.end != null), pitches = notes.Count(n => n.key == PitchKey);
         Core.Log.Msg($"[BMS] {log}: 노트 {notes.Count} (롱 {holds}, 피치 {pitches}), 레인 [{string.Join(",", lanes.Select((c, i) => $"{i + 1}={c}"))}], " +
                      $"bpm {bms.Bpm}, BGM 시작 {bgmPosition}, 무시한 오브젝트 {ignored}");
 
@@ -340,11 +350,15 @@ internal static class BmsConverter
         };
     }
 
+    private const int MaxTicksPerNote = 65536;
+
     /// <summary>롱노트 판정 틱: 시작부터 끝 직전까지 1/16마디 간격 (실측 원본과 동일).</summary>
     private static JsonArray Ticks(double start, double end)
     {
         var ticks = new JsonArray();
-        for (int i = 0; start + i / 16.0 < end - 1e-9; i++) ticks.Add(start + i / 16.0);
+        if (end <= start) return ticks;
+        for (int i = 0; i < MaxTicksPerNote && start + i / 16.0 < end - 1e-9; i++)
+            ticks.Add(start + i / 16.0);
         return ticks;
     }
 

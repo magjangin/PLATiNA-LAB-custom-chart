@@ -40,9 +40,12 @@ internal static class PureLogicTests
             "#WAV04 PitchNote.wav",
             "#WAV05 music.ogg",
             "#WAV06 PitchNote.wav",
+            "#BPM01 180",
+            "#BPM02 0",
             "#00001:0500",
             "#00116:01000200",
             "#00116:00000003",
+            "#00108:0102",
             "#00211:0104",
             "#00252:01000100",
             "#00313:0600"));
@@ -74,6 +77,12 @@ internal static class PureLogicTests
         if (holds != 3 || pitches != 1)
         {
             Console.WriteLine($"   [FAIL BmsConvert] holds={holds} (기대 3), pitches={pitches} (기대 1)");
+            failed++;
+        }
+        var bpms = ppp["bpms"]?.AsObject();
+        if (bpms == null || bpms.Count != 1 || Math.Abs((bpms["2"]?.GetValue<double>() ?? 0) - 180) > 0.001)
+        {
+            Console.WriteLine($"   [FAIL BmsConvert] bpms 필터링 실패: {bpms?.ToJsonString()}");
             failed++;
         }
         return failed;

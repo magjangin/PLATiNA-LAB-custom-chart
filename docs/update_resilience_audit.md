@@ -301,6 +301,30 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - **`[Body]`** (IL 읽기, `Module.ResolveMember`): ① 모든 메서드에서 게임 타입의 `op_Equality`/`op_Inequality` 호출 ② 훅 진입점(Prefix/Postfix/Finalizer)이 게임 타입·멤버를 직접 참조(자기 시그니처에 이미 있는 타입의 box/stobj 같은 타입 토큰은 제외 — 그 타입이 없으면 패치가 먼저 실패) ③ catch가 있는 비`[Guarded]` 메서드가 게임 멤버를 직접 참조. enum 상수는 IL에 숫자로 들어가므로 잡히지 않는다(= 실제로 타입 로드도 없음).
 - **`[BmsFind]`**: 아래 B7-1 회귀.
 
+## 8차 (2026-11-19): 전수 리팩토링, 병목 제거, 업데이트 내성 보강
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 50개·`[HarmonyPatch]` 26개·`[Required]` 10개·`[Layout]` 268개·`[Body]` 382개 메서드·`[BmsFind]` 8건·`[PureLogic]` 실패 0건. **인게임 실기 실행은 이 빌드로 미확인.**
+
+### 업데이트 내성 · 정확성
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| U8-1 | `PlayAssist.ApplyAutoPlay` | 본문에서 `InGameSettingType.Extra`를 직접 참조해 업데이트 시 바인딩 실패가 `HookGuard`에 보고되지 않고 매 곡마다 반복될 위험 | `TryEnableAutoPlayDirect`(`[Guarded]`)로 통합 격리하고 `HookGuard.Fail`로 보고 |
+| U8-2 | `OfflineSession.EnsureSectionRecords` | `GameEndResult` null 비교에 `!=` / `==` 사용 | 향후 `record` 전환 대비 `is not null` / `is null`로 통일 |
+| B8-1 | `CustomMedia.GetClip` / `GetCover` | `s_clips`/`s_covers`는 `OrdinalIgnoreCase`인데 `LinkedList<string>.Remove(path)`는 `Ordinal`이라 대소문자 불일치 시 LRU 고아 노드 잔류, `s_failedCovers` 상한 없음 | `LinkedListNode<string>`을 엔트리에 보관해 O(1) 제거/갱신, `MaxFailedCovers = 128` 상한 추가 |
+| B8-2 | `CustomSongs.Scan` / `Load` | `song_ids.json` 수동 편집 등으로 중복 번호가 있을 때 `PatternIndex` 충돌 가능, `lanes` 중복 줄 누적 | `usedNumbers` 집합으로 중복 방어, `lanes` 재설정 시 `Clear()` |
+| B8-3 | `BmsConverter.Convert` | `#BPMxx` 또는 채널 `03`의 0 이하 비정상 BPM이 `bpms`에 들어가 0으로 나누기 위험, `Ticks` 과다 루프 방어 없음 | `bpm > 0`만 반영, `end <= start` 및 `MaxTicksPerNote = 65536` 방어 (`PureLogicTests` 회귀 추가) |
+
+### 병목 · 할당 제거
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| P8-1 | `CustomMedia.GetClip` / `GetCover` | LRU `TouchLru`/`Remove`가 매번 `LinkedList` 선형 탐색 | 엔트리 `Node` 보관으로 O(1) |
+| P8-2 | `CustomSongs.FindIdIn` | `hwa_` 키마다 `All` 전체 순회 | `Scan()` 시 ID 길이 내림차순 배열(`s_songsByIdLengthDesc`) 생성 후 첫 매치 즉시 반환 |
+| P8-3 | `CustomCharts.HasCustomChartFiles` | 일반 곡 플레이마다 `Directory.EnumerateFiles(CustomDir, "*.json").Any()` 디스크 열거 | 5초 TTL 캐시(`Environment.TickCount64`) |
+| P8-4 | `BmsConverter.Convert` | `OrderBy().ThenBy()` LINQ 할당 및 `Objects.Any`/`notes.Count` 3회 추가 순회 | in-place `notes.Sort` 및 변환 루프 내 직접 집계 |
+| P8-5 | `PlayOverlay.LoadRanges` / `ModConfig.ColorOf` | 일회성/색상 검사에 LINQ(`All`/`Zip`/`Skip`/`Take`/`Any`) 할당 | 단순 `for` 루프로 교체 |
+
 ### 정확성
 
 | # | 위치 | 문제 | 수정 |

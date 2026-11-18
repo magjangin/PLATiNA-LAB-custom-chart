@@ -26,16 +26,19 @@ internal static class CustomMedia
     {
         public long Ticks;
         public HEAudioClip Clip;
+        public LinkedListNode<string> Node;
     }
     private static readonly Dictionary<string, ClipEntry> s_clips = new(StringComparer.OrdinalIgnoreCase);
     private static readonly LinkedList<string> s_clipLru = new();
     private static readonly object s_clipLock = new();
 
     private const int MaxCoverCache = 24;
+    private const int MaxFailedCovers = 128;
     private sealed class CoverEntry
     {
         public long Ticks;
         public Sprite Sprite;
+        public LinkedListNode<string> Node;
     }
     private static readonly Dictionary<string, CoverEntry> s_covers = new(StringComparer.OrdinalIgnoreCase);
     private static readonly LinkedList<string> s_coverLru = new();
@@ -51,10 +54,16 @@ internal static class CustomMedia
         catch { return 0; }
     }
 
-    private static void TouchLru(LinkedList<string> lru, string path)
+    private static void TouchLru(LinkedList<string> lru, LinkedListNode<string> node)
     {
-        lru.Remove(path);
-        lru.AddLast(path);
+        if (node == null || node.List != lru) return;
+        lru.Remove(node);
+        lru.AddLast(node);
+    }
+
+    private static void RemoveLruNode(LinkedList<string> lru, LinkedListNode<string> node)
+    {
+        if (node != null && node.List == lru) lru.Remove(node);
     }
 
     private static void DestroyClip(HEAudioClip clip)
@@ -82,12 +91,12 @@ internal static class CustomMedia
         {
             if (s_clips.TryGetValue(path, out var cached) && cached.Ticks == ticks && cached.Clip != null && !cached.Clip.WasCollected)
             {
-                TouchLru(s_clipLru, path);
+                TouchLru(s_clipLru, cached.Node);
                 return cached.Clip;
             }
             if (s_clips.Remove(path, out var stale))
             {
-                s_clipLru.Remove(path);
+                RemoveLruNode(s_clipLru, stale.Node);
                 DestroyClip(stale.Clip);
             }
 
@@ -103,17 +112,17 @@ internal static class CustomMedia
             if (s_clips.TryGetValue(path, out var race) && race.Ticks == ticks && race.Clip != null && !race.Clip.WasCollected)
             {
                 DestroyClip(clip);
-                TouchLru(s_clipLru, path);
+                TouchLru(s_clipLru, race.Node);
                 return race.Clip;
             }
             if (s_clips.Remove(path, out var old))
             {
-                s_clipLru.Remove(path);
+                RemoveLruNode(s_clipLru, old.Node);
                 DestroyClip(old.Clip);
             }
             EvictClipsIfFull();
-            s_clips[path] = new ClipEntry { Ticks = ticks, Clip = clip };
-            s_clipLru.AddLast(path);
+            var node = s_clipLru.AddLast(path);
+            s_clips[path] = new ClipEntry { Ticks = ticks, Clip = clip, Node = node };
         }
         return clip;
     }
@@ -299,17 +308,18 @@ internal static class CustomMedia
         {
             if (s_covers.TryGetValue(path, out var cached) && cached.Ticks == ticks && cached.Sprite != null && !cached.Sprite.WasCollected)
             {
-                TouchLru(s_coverLru, path);
+                TouchLru(s_coverLru, cached.Node);
                 return cached.Sprite;
             }
             // 캐시에 있던 스프라이트가 수집됐거나 파일이 수정됐으면 항목을 지운다.
             if (s_covers.Remove(path, out var stale))
             {
-                s_coverLru.Remove(path);
+                RemoveLruNode(s_coverLru, stale.Node);
                 DestroySprite(stale.Sprite);
             }
             if (s_failedCovers.TryGetValue(path, out var failedTicks) && failedTicks == ticks)
                 return null; // 수정되지 않은 실패 파일은 매 프레임 재시도하지 않는다
+            if (s_failedCovers.Count >= MaxFailedCovers) s_failedCovers.Clear();
             s_failedCovers[path] = ticks;
 
             // 캐시 한도 초과 시 가장 오래된 텍스처/스프라이트 메모리 명시적 해제 (GPU VRAM 누수 차단)
@@ -341,13 +351,14 @@ internal static class CustomMedia
                 if (existing.Ticks == ticks && existing.Sprite != null && !existing.Sprite.WasCollected)
                 {
                     DestroySprite(sprite);
+                    TouchLru(s_coverLru, existing.Node);
                     return existing.Sprite;
                 }
-                s_coverLru.Remove(path);
+                RemoveLruNode(s_coverLru, existing.Node);
                 DestroySprite(existing.Sprite);
             }
-            s_covers[path] = new CoverEntry { Ticks = ticks, Sprite = sprite };
-            s_coverLru.AddLast(path);
+            var node = s_coverLru.AddLast(path);
+            s_covers[path] = new CoverEntry { Ticks = ticks, Sprite = sprite, Node = node };
             s_failedCovers.Remove(path);
             cacheCount = s_covers.Count;
         }

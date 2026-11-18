@@ -240,7 +240,10 @@ DiagnosticLogs=0
             if (ok)
             {
                 // 0~255로 적었으면 0~1로
-                if (f.Take(parts.Length).Any(x => x > 1f)) for (int i = 0; i < parts.Length; i++) f[i] /= 255f;
+                bool scale255 = false;
+                for (int i = 0; i < parts.Length; i++)
+                    if (f[i] > 1f) { scale255 = true; break; }
+                if (scale255) for (int i = 0; i < parts.Length; i++) f[i] /= 255f;
                 return new Color(f[0], f[1], f[2], f[3]);
             }
         }
