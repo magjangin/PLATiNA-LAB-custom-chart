@@ -11,5 +11,8 @@
   <ItemGroup>
     <Compile Include="..\..\mod\InteropNames.cs" Link="InteropNames.cs" />
     <Compile Include="..\..\mod\TextSanitizer.cs" Link="TextSanitizer.cs" />
+    <Compile Include="..\..\mod\EncodingHelper.cs" Link="EncodingHelper.cs" />
+    <Compile Include="..\..\mod\BmsConverter.cs" Link="BmsConverter.cs" />
+    <Compile Include="..\..\mod\MediaDuration.cs" Link="MediaDuration.cs" />
   </ItemGroup>
 </Project>

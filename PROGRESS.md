@@ -1,19 +1,17 @@
-# PLATiNA LAB IL2CPP 분석 및 모드 스켈레톤 진행 상황
+# PLATiNA LAB IL2CPP 분석 및 모드 진행 상황
 
 ## 환경 정보
-- **게임명:** PLATiNA LAB
-- **App ID:** 3430470 (Steam Build ID: 25981392)
-- **대상 실행 파일:** `H:\steam\steamapps\common\PLATiNA LAB\PLATiNA LAB.exe`
+- **게임명:** PLATiNA LAB (Steam App ID: `3430470`, Build ID: `25981392`)
 - **Unity 버전:** 6000.3.25f1 (IL2CPP, metadata v39)
 - **모드 로더:** MelonLoader 0.7.3 Open-Beta (Runtime: net6)
-- **작업 디렉터리:** `H:\source\repos\PLATiNA LAB-unity-il2cpp`
 
 ---
 
-## 단계별 진행 상황
+## 완료된 마일스톤
+- **1~2단계 (메타데이터·디컴파일):** `dummy_dll` 및 `src_dummy` (`ilspycmd` 정적 소스) 확보 완료.
+- **3~4단계 (후킹 분석 및 모드 구축):** `mod/PLATiNALAB.Mod.csproj` 빌드 및 `Mods\` 자동 배포 구축 완료.
+- **커스텀 차트 & 커스텀 곡:** PPP JSON 스트림 교체, `hwa\` 폴더 기반 커스텀 곡 주입, BMS → PPP 변환(단노트/롱노트/LNOBJ/피치노트), 커버·음원(OGG)·BGA(MP4) 교체 및 길이 자동 연장 구현 완료.
+- **플레이 보조 & 오버레이:** `SaveCustomKey\config.txt` 설정 핫리로드, 오토 플레이, 올 퍼펙트(커스텀 곡 전용), 판정바, 키뷰어 구현 완료.
+- **오프라인 검증 하네스:** `tools/interop-harness`로 인터롭 타입·`[Guarded]` JIT·`[HarmonyPatch]`·필드 레이아웃·본문 IL·순수 로직 회귀 테스트 자동 검증 중.
 
-- [완료] 1단계: IL2CPP 메타데이터 덤프 — `H:\source\repos\PLATiNA LAB-unity-il2cpp\dummy_dll` — standalone Il2CppDumper/Cpp2IL은 v39 미지원이었으나 MelonLoader 내장 Cpp2IL v2022.1.0-pre-release.21(+StrippedCodeRegSupport)이 정상 생성한 Dummy DLL을 가져와 확보.
-- [완료] 2단계: 시그니처 탐색 — `H:\source\repos\PLATiNA LAB-unity-il2cpp\src_dummy` — ilspycmd를 사용하여 `Il2CppPlatinaLab.Main.dll` 및 `Il2CppPlatinaLab.DataModel.dll` 전체 C# 스켈레톤 디컴파일 완료.
-- [완료] 3단계: 로직 분석 및 후킹 후보 도출 — `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md` — 차트 파싱(PatternParser), 인게임 플레이(PatternPlayer), 판정(JudgeResult), 선곡 해금(SongSelectDirector) 타깃 정리.
-- [완료] 4단계: MelonLoader 0.7.3 모드 스켈레톤 구축 — `H:\source\repos\PLATiNA LAB-unity-il2cpp\mod` — .NET 6 기반 MelonMod 프로젝트 빌드 성공 (`dotnet build` 오류 CS0656 NullableContextAttribute 해결: Nullable disable 설정) 및 `Mods\` 자동 배포.
-- [완료] 5단계: 실행 검증 — `H:\steam\steamapps\common\PLATiNA LAB\MelonLoader\Latest.log` — 실제 게임 기동 후 `[PLATiNA_LAB_Custom_Mod] PLATiNA LAB Mod Skeleton Loaded!` 로그 출력 및 1 Mod 정상 로드 확인.
+상세 사용법은 [README.md](README.md), 기술 인수인계 및 규칙은 [AGENTS.md](AGENTS.md)를 참고하세요.

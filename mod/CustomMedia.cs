@@ -336,6 +336,16 @@ internal static class CustomMedia
         int cacheCount;
         lock (s_coverLock)
         {
+            if (s_covers.TryGetValue(path, out var existing))
+            {
+                if (existing.Ticks == ticks && existing.Sprite != null && !existing.Sprite.WasCollected)
+                {
+                    DestroySprite(sprite);
+                    return existing.Sprite;
+                }
+                s_coverLru.Remove(path);
+                DestroySprite(existing.Sprite);
+            }
             s_covers[path] = new CoverEntry { Ticks = ticks, Sprite = sprite };
             s_coverLru.AddLast(path);
             s_failedCovers.Remove(path);

@@ -122,10 +122,10 @@ KeyViewerPressedColor=#26BFD9D9
 .NET 6 SDK가 필요합니다:
 
 ```powershell
-dotnet build mod\PLATiNALAB.Mod.csproj
+dotnet build mod\PLATiNALAB.Mod.csproj -c Release
 ```
 
-빌드가 끝나면 DLL이 `<GameRoot>\Mods\`로 자동 복사됩니다.
+게임이 다른 경로에 설치되어 있으면 `-p:GameRoot="C:\...\PLATiNA LAB"`로 덮어쓸 수 있습니다. 빌드가 끝나면 DLL이 `<GameRoot>\Mods\`로 자동 복사됩니다(게임이 실행 중이면 경고만 남기고 빌드는 계속됩니다).
 
 ## 게임이 업데이트됐을 때
 

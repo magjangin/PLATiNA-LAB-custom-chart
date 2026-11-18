@@ -294,18 +294,15 @@ internal static class InGameSurface_SendGameEnd_Patch
     }
 }
 
-// --- 게임 종료 경로 진단 ---
-
-[HarmonyPatch(typeof(Il2CppPlatinaLab.Main.Director.PlayDirector), nameof(Il2CppPlatinaLab.Main.Director.PlayDirector.TrySaveScoreAndGameOver))]
-internal static class Diag_TrySave
-{
-    private static void Prefix() => Core.Log.Msg("[Diag] PlayDirector.TrySaveScoreAndGameOver");
-}
+// --- 게임 종료 경로 정리 ---
 
 [HarmonyPatch(typeof(Il2CppPlatinaLab.Main.Director.PlayDirector), nameof(Il2CppPlatinaLab.Main.Director.PlayDirector.Exit))]
 internal static class PlayDirector_Exit_Patch
 {
-    private static void Prefix(bool isGameOver) => Core.Log.Msg($"[Diag] PlayDirector.Exit(isGameOver={isGameOver})");
+    private static void Prefix(bool isGameOver)
+    {
+        if (ModConfig.DiagnosticLogs) Core.Log.Msg($"[Diag] PlayDirector.Exit(isGameOver={isGameOver})");
+    }
 
     private static void Postfix()
     {
@@ -320,16 +317,4 @@ internal static class PlayDirector_Exit_Patch
             Core.Log.Warning($"[PlayDirector.Exit] 나가기 상태 정리 오류: {e.Message}");
         }
     }
-}
-
-[HarmonyPatch(typeof(Il2CppPlatinaLab.Main.Common.Dialog.ErrorDialogCollection), nameof(Il2CppPlatinaLab.Main.Common.Dialog.ErrorDialogCollection.APIServerError))]
-internal static class Diag_APIServerError
-{
-    private static void Prefix() => Core.Log.Warning("[Diag] ErrorDialogCollection.APIServerError");
-}
-
-[HarmonyPatch(typeof(Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper), nameof(Il2CppPlatinaLab.Main.InGameSetting.Utilities.InGameSettingHelper.IsScorable))]
-internal static class Diag_IsScorable
-{
-    private static void Postfix(bool __result) => Core.Log.Msg($"[Diag] IsScorable={__result}");
 }

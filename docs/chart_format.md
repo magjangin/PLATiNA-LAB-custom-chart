@@ -9,7 +9,7 @@
    - 원래대로 돌리려면 CustomCharts의 파일을 지우거나 이름을 바꾼다.
 
 패턴키 = `{곡ID}__{FilePath 파일명}`. 예: `wits_biz__FourLines_Easy`. (파일명만으로는 여러 곡이 겹친다)
-커스텀 곡(`custom` 카테고리의 Custom Test)의 차트는 `CustomCharts\custom_test.json` — 없으면 첫 노트만 남긴 차트가 자동 생성된다.
+커스텀 곡(`hwa\<곡폴더>\`)은 곡 폴더 안의 `.bms/.bme/.bml/.pms` 또는 `chart_<난이도>.json` / `chart.json`을 사용하며, 둘 다 없으면 첫 노트만 남긴 템플릿 차트가 자동 생성된다.
 
 ## JSON 구조 (System.Text.Json, camelCase)
 ```json

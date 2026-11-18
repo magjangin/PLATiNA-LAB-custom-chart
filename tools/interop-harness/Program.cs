@@ -31,7 +31,8 @@ static class P
         if (args.Length > 0 && args[0] == "explore") { Explore(asms); return 0; }
         Evaluate(asms);
         bool textOk = VerifyTextSanitizer();
-        return VerifyModAssembly() && textOk ? 0 : 1;
+        bool pureOk = PureLogicTests.RunAll();
+        return VerifyModAssembly() && textOk && pureOk ? 0 : 1;
     }
 
     /// <summary>곡 제목·아티스트 정규화 회귀 검사 (따옴표를 축약형으로 오인해 붙이던 문제 포함).</summary>

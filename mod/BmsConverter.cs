@@ -142,10 +142,12 @@ internal static class BmsConverter
         return true;
     }
 
-    public static BmsChart Parse(string path)
+    public static BmsChart ParseHeader(string path) => Parse(path, headerOnly: true);
+
+    public static BmsChart Parse(string path, bool headerOnly = false)
     {
         var chart = new BmsChart { Path = path };
-        var dataLines = new List<(int measure, string channel, string data)>();
+        var dataLines = headerOnly ? null : new List<(int measure, string channel, string data)>();
 
         // UTF-8, GBK(중국어), Shift-JIS(일본어), CP949(한국어) 자동 감지 적용
         foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
@@ -156,7 +158,7 @@ internal static class BmsConverter
             // #mmmcc:data — 채널 데이터 (오브젝트 폭은 헤더를 다 읽은 뒤 정한다)
             if (line.Length > 7 && line[6] == ':' && int.TryParse(line.AsSpan(1, 3), out var measure))
             {
-                dataLines.Add((measure, line.Substring(4, 2).ToUpperInvariant(), line[7..].Trim()));
+                dataLines?.Add((measure, line.Substring(4, 2).ToUpperInvariant(), line[7..].Trim()));
                 continue;
             }
 
@@ -168,10 +170,13 @@ internal static class BmsConverter
             else if (key == "ARTIST") chart.Artist = TextSanitizer.Sanitize(arg);
             else if (key == "BPM" && TryDouble(arg, out var bpm)) chart.Bpm = bpm;
             else if (key == "PLAYLEVEL" && int.TryParse(arg, out var lv)) chart.PlayLevel = lv;
+            else if (headerOnly) continue;
             else if (key == "LNOBJ") chart.LnObj = arg.ToUpperInvariant();
             else if (key.StartsWith("WAV") && key.Length > 3) chart.Wav[key[3..]] = arg;
             else if (key.StartsWith("BPM") && key.Length > 3 && TryDouble(arg, out var b)) chart.BpmTable[key[3..]] = b;
         }
+
+        if (headerOnly) return chart;
 
         int width = chart.Wav.Count > 0 ? chart.Wav.Keys.Max(k => k.Length) : 2;
         foreach (var (measure, channel, data) in dataLines)

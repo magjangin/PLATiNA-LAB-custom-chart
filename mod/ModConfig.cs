@@ -14,6 +14,7 @@ internal static class ModConfig
 {
     public static bool AutoPlay;
     public static bool AllPerfect;
+    public static bool DiagnosticLogs;
 
     public static bool EnableJudgmentBar = true;
     public static bool JudgmentBarVertical = true;
@@ -32,6 +33,13 @@ internal static class ModConfig
     public static string FilePath => Path.Combine(MelonEnvironment.GameRootDirectory, "SaveCustomKey", "config.txt");
 
     private static long s_lastWriteTicks = long.MinValue;
+
+    private static readonly HashSet<string> s_warned = new(StringComparer.OrdinalIgnoreCase);
+
+    private static void WarnOnce(string key, string msg)
+    {
+        if (s_warned.Add(key)) Core.Log.Warning($"[Config] {msg}");
+    }
 
     private const string DefaultText = @"# PLATiNA LAB 모드 설정 파일 (SaveCustomKey/config.txt)
 # 저장하면 다음 곡(곡을 시작할 때)부터 적용됩니다. 게임을 다시 켤 필요는 없습니다.
@@ -80,6 +88,11 @@ KeyViewerNormalColor=#141414A6
 
 # 피치 키를 눌렀을 때 색
 KeyViewerPitchPressedColor=#FF4081E6
+
+# ===== [디버그] =====
+
+# 진단용 상세 로그 패치 활성화 (1 = 켜짐, 0 = 꺼짐)
+DiagnosticLogs=0
 ";
 
     public static void Load(string reason)
@@ -110,6 +123,7 @@ KeyViewerPitchPressedColor=#FF4081E6
                 Apply(line[..eq].Trim(), line[(eq + 1)..].Trim());
             }
             s_lastWriteTicks = ticks;
+            if (DiagnosticLogs && Core.Patcher != null) DiagnosticPatches.Apply(Core.Patcher);
             Core.Log.Msg($"[Config] {reason}: AutoPlay={AutoPlay} AllPerfect={AllPerfect} JudgmentBar={EnableJudgmentBar} KeyViewer={EnableKeyViewer}");
         }
         catch (Exception e)
@@ -122,6 +136,7 @@ KeyViewerPitchPressedColor=#FF4081E6
     {
         AutoPlay = false;
         AllPerfect = false;
+        DiagnosticLogs = false;
         EnableJudgmentBar = true;
         JudgmentBarVertical = true;
         JudgmentBarShape = 0;
@@ -137,32 +152,60 @@ KeyViewerPitchPressedColor=#FF4081E6
     {
         switch (key.ToLowerInvariant())
         {
-            case "autoplay": AutoPlay = Bool(value, AutoPlay); break;
-            case "allperfect": AllPerfect = Bool(value, AllPerfect); break;
-            case "enablejudgmentbar": EnableJudgmentBar = Bool(value, EnableJudgmentBar); break;
-            case "judgmentbarvertical": JudgmentBarVertical = Bool(value, JudgmentBarVertical); break;
-            case "judgmentbarshape": JudgmentBarShape = Int(value, JudgmentBarShape, 0, 2); break;
-            case "judgmentbarrangeshape": JudgmentBarRangeShape = Int(value, JudgmentBarRangeShape, -1, 2); break;
-            case "judgmentbarside": JudgmentBarSide = value; break;
-            case "enablekeyviewer": EnableKeyViewer = Bool(value, EnableKeyViewer); break;
-            case "keyviewerpressedcolor": KeyViewerPressedColor = ColorOf(value, KeyViewerPressedColor); break;
-            case "keyviewernormalcolor": KeyViewerNormalColor = ColorOf(value, KeyViewerNormalColor); break;
+            case "autoplay": AutoPlay = Bool(key, value, AutoPlay); break;
+            case "allperfect": AllPerfect = Bool(key, value, AllPerfect); break;
+            case "diagnosticlogs": DiagnosticLogs = Bool(key, value, DiagnosticLogs); break;
+            case "enablejudgmentbar": EnableJudgmentBar = Bool(key, value, EnableJudgmentBar); break;
+            case "judgmentbarvertical": JudgmentBarVertical = Bool(key, value, JudgmentBarVertical); break;
+            case "judgmentbarshape": JudgmentBarShape = Int(key, value, JudgmentBarShape, 0, 2); break;
+            case "judgmentbarrangeshape": JudgmentBarRangeShape = Int(key, value, JudgmentBarRangeShape, -1, 2); break;
+            case "judgmentbarside": JudgmentBarSide = Side(key, value, JudgmentBarSide); break;
+            case "enablekeyviewer": EnableKeyViewer = Bool(key, value, EnableKeyViewer); break;
+            case "keyviewerpressedcolor": KeyViewerPressedColor = ColorOf(key, value, KeyViewerPressedColor); break;
+            case "keyviewernormalcolor": KeyViewerNormalColor = ColorOf(key, value, KeyViewerNormalColor); break;
             case "keyviewerpitchpressedcolor": case "keyviewergatepressedcolor":
-                KeyViewerPitchPressedColor = ColorOf(value, KeyViewerPitchPressedColor); break;
+                KeyViewerPitchPressedColor = ColorOf(key, value, KeyViewerPitchPressedColor); break;
+            default:
+                WarnOnce($"key:{key}", $"알 수 없는 설정 키 '{key}' (무시됨)");
+                break;
         }
     }
 
-    private static bool Bool(string v, bool fallback) => v.ToLowerInvariant() switch
+    private static string Side(string key, string v, string fallback)
     {
-        "1" or "true" or "on" or "켜짐" or "켬" or "yes" or "开" or "开启" or "是" or "对" => true,
-        "0" or "false" or "off" or "꺼짐" or "끔" or "no" or "关" or "关闭" or "否" or "错" => false,
-        _ => fallback,
-    };
+        if (string.Equals(v, "Left", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(v, "Right", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(v, "Center", StringComparison.OrdinalIgnoreCase))
+            return v;
+        WarnOnce($"val:{key}={v}", $"'{key}'의 값 '{v}'이(가) 잘못되었습니다 (Left/Right/Center 중 하나). 기본값 '{fallback}'을 사용합니다.");
+        return fallback;
+    }
 
-    private static int Int(string v, int fallback, int min, int max) =>
-        int.TryParse(v, out var n) ? Math.Clamp(n, min, max) : fallback;
+    private static bool Bool(string key, string v, bool fallback)
+    {
+        switch (v.ToLowerInvariant())
+        {
+            case "1" or "true" or "on" or "켜짐" or "켬" or "yes" or "开" or "开启" or "是" or "对": return true;
+            case "0" or "false" or "off" or "꺼짐" or "끔" or "no" or "关" or "关闭" or "否" or "错": return false;
+            default:
+                WarnOnce($"val:{key}={v}", $"'{key}'의 값 '{v}'을(를) 켜기/끄기로 해석할 수 없어 기본값({fallback})을 사용합니다.");
+                return fallback;
+        }
+    }
 
-    private static Color ColorOf(string v, Color fallback)
+    private static int Int(string key, string v, int fallback, int min, int max)
+    {
+        if (int.TryParse(v, out var n))
+        {
+            if (n < min || n > max)
+                WarnOnce($"range:{key}={v}", $"'{key}'의 값 {n}이(가) 범위({min}~{max})를 벗어나 {Math.Clamp(n, min, max)}(으)로 조정합니다.");
+            return Math.Clamp(n, min, max);
+        }
+        WarnOnce($"val:{key}={v}", $"'{key}'의 값 '{v}'이(가) 정수가 아니어서 기본값({fallback})을 사용합니다.");
+        return fallback;
+    }
+
+    private static Color ColorOf(string key, string v, Color fallback)
     {
         v = v.Trim();
         switch (v.ToLowerInvariant())
@@ -191,12 +234,17 @@ KeyViewerPitchPressedColor=#FF4081E6
         if (parts.Length is 3 or 4)
         {
             var f = new float[4] { 0, 0, 0, 1 };
+            bool ok = true;
             for (int i = 0; i < parts.Length; i++)
-                if (!float.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out f[i])) return fallback;
-            // 0~255로 적었으면 0~1로
-            if (f.Take(parts.Length).Any(x => x > 1f)) for (int i = 0; i < parts.Length; i++) f[i] /= 255f;
-            return new Color(f[0], f[1], f[2], f[3]);
+                if (!float.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out f[i])) { ok = false; break; }
+            if (ok)
+            {
+                // 0~255로 적었으면 0~1로
+                if (f.Take(parts.Length).Any(x => x > 1f)) for (int i = 0; i < parts.Length; i++) f[i] /= 255f;
+                return new Color(f[0], f[1], f[2], f[3]);
+            }
         }
+        WarnOnce($"val:{key}={v}", $"'{key}'의 색상 값 '{v}'을(를) 해석할 수 없어 기본값을 사용합니다.");
         return fallback;
     }
 }

@@ -97,7 +97,7 @@
 
   <!-- Auto deploy to Mods folder on build -->
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameRoot)\Mods\" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameRoot)\Mods\" ContinueOnError="WarnAndContinue" />
   </Target>
 
 </Project>

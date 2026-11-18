@@ -36,11 +36,15 @@ Unity 6 (6000.3.25f1) IL2CPP 기반 메인 로직 어셈블리(`Il2CppPlatinaLab
 
 ---
 
-## 3. 곡 선택 및 해금 바이패스 (Song Select & Unlock)
+## 3. 곡 선택 및 해금 우회 (Song Select & Unlock)
+
+실제 모드에서는 `SongSelectDirector` 대신 `SongInfo`의 개별 판정 메서드와 `CategoryCacheFactory`를 후킹해 커스텀 곡만 잠금/미보유 검사를 우회합니다.
 
 | 클래스 (Namespace 포함) | 메서드 시그니처 | 역할 및 모딩 활용 의도 |
 | :--- | :--- | :--- |
-| `Il2CppPlatinaLab.Main.Director.SongSelectDirector` | `bool IsLock()` | 곡 및 패턴 잠금 여부 검사. `false` 반환 시 잠금 해제 가능. |
-| `Il2CppPlatinaLab.Main.Director.SongSelectDirector` | `bool IsNotOwned()` | DLC/미보유 곡 검사. `false` 반환 시 미보유 차단 우회 가능. |
-| `Il2CppPlatinaLab.Main.Director.SongSelectDirector` | `UniTaskVoid TryGameStart()` | 선곡 후 인게임 진입 트리거. |
-| `Il2CppPlatinaLab.Main.Select.PatternList.PatternListManager` | `void SelectPattern(PatternInfo patternInfo)` | 난이도 및 패턴 선택 변경 처리. |
+| `Il2CppPlatinaLab.Main.Catalog.Scheme.Song.SongInfo` | `bool IsHiddenFromDefaultList` (getter) | 커스텀 곡이 기본 목록에서 숨겨지지 않도록 `false` 반환. |
+| `Il2CppPlatinaLab.Main.Catalog.Scheme.Song.SongInfo` | `bool IsAvailable()` | 커스텀 곡이 항상 플레이 가능하도록 `true` 반환. |
+| `Il2CppPlatinaLab.Main.Catalog.Scheme.Song.SongInfo` | `bool IsNotOwned()` | 커스텀 곡의 미보유 차단을 우회하도록 `false` 반환. |
+| `Il2CppPlatinaLab.Main.Catalog.Scheme.Song.SongInfo` | `EncryptedBool IsLock()` | 커스텀 곡의 잠금 여부를 `false`로 반환. |
+| `Il2CppPlatinaLab.Main.Catalog.Scheme.Song.SongInfo` | `EncryptedBool IsNewSongMarkTarget()` | 커스텀 곡의 신규 곡 마크 조회 예외 방지를 위해 `false` 반환. |
+| `Il2CppPlatinaLab.Main.Select.Category.CategoryCacheFactory` | `List<AbstractPreFilteredCache> CreateAll()` | `custom` 카테고리 탭 추가 및 커스텀 곡 데이터 주입 트리거. |
