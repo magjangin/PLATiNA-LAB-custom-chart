@@ -297,8 +297,8 @@ internal static class CustomMedia
         }
     }
 
-    /// <summary>미리듣기 중인 커스텀 곡 (PreviewSoundController.Play에서 설정).</summary>
-    public static CustomSong PreviewSong;
+    /// <summary>미리듣기 중인 커스텀 곡 (PreviewSoundController.Play에서 설정). 오디오 스레드에서도 읽는다.</summary>
+    public static volatile CustomSong PreviewSong;
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("CoverManager.GetCoverSprite")]
     public static Sprite GetCover(string path)
@@ -356,6 +356,13 @@ internal static class CustomMedia
                 }
                 RemoveLruNode(s_coverLru, existing.Node);
                 DestroySprite(existing.Sprite);
+            }
+            while (s_covers.Count >= MaxCoverCache && s_coverLru.First != null)
+            {
+                var oldest = s_coverLru.First.Value;
+                s_coverLru.RemoveFirst();
+                if (s_covers.Remove(oldest, out var oldEntry))
+                    DestroySprite(oldEntry.Sprite);
             }
             var node = s_coverLru.AddLast(path);
             s_covers[path] = new CoverEntry { Ticks = ticks, Sprite = sprite, Node = node };

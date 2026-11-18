@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppPlatinaLab.DataModel.SongCategory;
@@ -79,7 +78,7 @@ internal static class SongInfo_IsLock_Patch
 {
     private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
     {
-        if (!CustomSongs.IsCustomSong(__instance)) return true;
+        if (HookGuard.IsDisabled("EncryptedBool") || !CustomSongs.IsCustomSong(__instance)) return true;
         try { __result = CustomSongs.EncryptedFalse(); }
         catch (Exception e)
         {
@@ -95,7 +94,7 @@ internal static class SongInfo_IsNewSongMarkTarget_Patch
 {
     private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
     {
-        if (!CustomSongs.IsCustomSong(__instance)) return true;
+        if (HookGuard.IsDisabled("EncryptedBool") || !CustomSongs.IsCustomSong(__instance)) return true;
         try { __result = CustomSongs.EncryptedFalse(); }
         catch (Exception e)
         {
@@ -135,20 +134,26 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
         }
     }
 
+    private const string CreateDirectHook = "SongCategoryResourceCollection.CreateDirect";
+
     private static SongCategoryResourceDataSet CreateOrFallback(SongCategoryResourceCollection collection)
     {
-        try
+        if (!HookGuard.IsDisabled(CreateDirectHook))
         {
-            return Create(collection);
+            try
+            {
+                return Create(collection);
+            }
+            catch (Exception e)
+            {
+                HookGuard.Fail(CreateDirectHook, e);
+            }
         }
-        catch (Exception e)
-        {
-            HookGuard.Fail("SongCategoryResourceCollection.CreateDirect", e);
-            return CreateFallback(collection);
-        }
+        return CreateFallback(collection);
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("SongCategoryResourceCollection.GetDataSet")]
+    // Create 실패 시 GetDataSet 훅 전체가 아니라 CreateDirect만 꺼서 리플렉션 폴백(CreateFallback)에 도달하게 한다.
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(CreateDirectHook)]
     private static SongCategoryResourceDataSet Create(SongCategoryResourceCollection collection)
     {
         var donor = collection.GetDataSet(DonorKey);
@@ -216,7 +221,7 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
         return r;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("SongCategoryResourceCollection.SetTextRenderTypeDirect")]
     private static void SetTextRenderTypeDirect(CategoryResource r) =>
         r._resourceRenderType = CategoryResource.RenderType.Text;
 }

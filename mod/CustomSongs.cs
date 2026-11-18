@@ -1,12 +1,7 @@
 ﻿using System.Text.Json.Nodes;
-using HarmonyLib;
-using Il2CppInterop.Runtime;
-using Il2CppPlatinaLab.DataModel.SongCategory;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Il2CppPlatinaLab.Main.Catalog;
 using Il2CppPlatinaLab.Main.Catalog.Scheme.Song;
-using Il2CppPlatinaLab.Main.Select.Category;
-using Il2CppPlatinaLab.Main.Select.Category.Cache;
 using MelonLoader.Utils;
 
 namespace PLATiNALAB.Mod;
@@ -246,11 +241,11 @@ internal static class CustomSongs
     public static readonly string RootDir = Path.Combine(MelonEnvironment.GameRootDirectory, "hwa");
     public static readonly List<CustomSong> All = new();
 
-    /// <summary>지금 플레이 중인 커스텀 패턴 (RequestGameStart에서 설정, 일반 곡이면 null).</summary>
-    public static CustomChart Current;
+    /// <summary>지금 플레이 중인 커스텀 패턴 (RequestGameStart에서 설정, 일반 곡이면 null). 메인·입력·오디오 스레드가 함께 읽는다.</summary>
+    public static volatile CustomChart Current;
 
     /// <summary>기반 패턴의 리소스 파일명. 커스텀 패턴도 이 리소스를 로드해야 Parse 후킹까지 도달한다.</summary>
-    internal static string s_baseFileName;
+    internal static volatile string s_baseFileName;
     /// <summary>
     /// 기반 곡 SongInfo. PlayDirector.LoadGame은 차트 등 리소스 주소를 SongInfo.Id로 만든다
     /// (실측: Concat(prefix, SongInfo.Id, sep, GetPatternFileName()) → Addressables.LoadAssetAsync).
@@ -258,7 +253,7 @@ internal static class CustomSongs
     /// </summary>
     internal static SongInfo s_baseSong;
     /// <summary>s_baseSong.Id를 관리 문자열로 한 번만 받아 둔다 (Locate·음원 훅에서 매번 IL2CPP 문자열을 변환하지 않도록).</summary>
-    internal static string s_baseSongId;
+    internal static volatile string s_baseSongId;
 
     /// <summary>커스텀 곡이 게임 데이터에 들어갔는지. 그 전에는 커스텀 SongInfo가 없으므로 SongInfo 훅이 Id를 읽지 않고 넘어간다.</summary>
     public static volatile bool Injected;
@@ -795,6 +790,7 @@ internal static class CustomSongs
         if (seconds <= 0) return;
 
         double bpm = root["initialBpm"]?.GetValue<double>() ?? 120;
+        if (bpm <= 0) bpm = 120;
         double bgmPos = root["bgms"]?.AsArray().FirstOrDefault()?["position"]?.GetValue<double>() ?? 1;
         if (root["bpms"] is JsonObject bpms && bpms.Count > 0)
             Core.Log.Warning($"[CustomSongs] {song.Id} 차트에 BPM 변속이 있어 길이 계산이 근사값입니다 (initialBpm {bpm} 기준)");

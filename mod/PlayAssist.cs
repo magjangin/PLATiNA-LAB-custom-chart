@@ -210,19 +210,25 @@ internal static class PlayAssist
                 ForcePerfect(judgeResult);
         }
 
+        private const string SetPerfectHook = "PlayAssist.SetPerfectDirect";
+
         /// <summary>
         /// 1차: 프로퍼티 세터 직접 호출. 2차(세터가 없어졌거나 실패): 이름 기반 리플렉션.
         /// 예전에는 노트마다 두 경로를 모두 실행했다 (같은 세터를 두 번 호출, 리플렉션 비용).
+        /// 바인딩 실패 시 SetPerfectDirect만 비활성화해 이후 노트에서는 예외 없이 바로 리플렉션으로 간다.
         /// </summary>
         [MethodImpl(MethodImplOptions.NoInlining), Guarded("PatternPlayer.ProcessJudgeResult")] // 리플렉션 폴백이 JudgmentType을 박싱한다
         private static void ForcePerfect(JudgeResult judgeResult)
         {
-            try
+            if (!HookGuard.IsDisabled(SetPerfectHook))
             {
-                SetPerfectDirect(judgeResult);
-                return;
+                try
+                {
+                    SetPerfectDirect(judgeResult);
+                    return;
+                }
+                catch (Exception e) { HookGuard.Fail(SetPerfectHook, e); }
             }
-            catch { /* 리플렉션 폴백 */ }
             if (!UpdateResilience.SafeSetFieldOrProperty(judgeResult, "Judgment", JudgmentType.PerfectHigh) && !s_setFailureLogged)
             {
                 s_setFailureLogged = true;
@@ -230,7 +236,7 @@ internal static class PlayAssist
             }
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
+        [MethodImpl(MethodImplOptions.NoInlining), Guarded(SetPerfectHook)]
         private static void SetPerfectDirect(JudgeResult judgeResult) => judgeResult.Judgment = JudgmentType.PerfectHigh;
     }
 

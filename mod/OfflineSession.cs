@@ -77,7 +77,7 @@ internal static class InGameSurface_RenewGameSession_Patch
 
     private static bool Prefix(string gameToken, ref UniTask<SurfaceResult> __result)
     {
-        if (gameToken != OfflineSession.Token) return true;
+        if (gameToken != OfflineSession.Token || HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = RenewLocal();
@@ -143,7 +143,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     private static UniTask<SurfaceResult<FreeModePlayRecordV2>> NetworkError() =>
         new(SurfaceResult<FreeModePlayRecordV2>.NetworkError());
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("OfflineSession.FinalScore")]
     private static int FinalScore(GameEndResult request) => Math.Max(request?.Score ?? 0, request?.FinalScore ?? 0);
 
     /// <summary>
@@ -282,7 +282,7 @@ internal static class InGameSurface_SendGameEnd_Patch
         catch { return UpdateResilience.SafeGetFieldOrProperty(m, "ScaledRawValue", 0); }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("OfflineSession.ReadMasteryRawDirect")]
     private static int ReadMasteryRawDirect(Il2CppPlatinaLab.Main.Common.Types.Mastery m) =>
         m._ScaledRawValue_k__BackingField;
 

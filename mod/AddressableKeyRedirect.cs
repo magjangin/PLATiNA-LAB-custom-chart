@@ -123,10 +123,12 @@ internal static class AddressableKeyRedirect
     /// 게임의 모든 Addressables 로드(효과음·UI·차트 등)가 지나가므로, 커스텀 곡 키가 아니면 할당 없이 끝낸다:
     /// 관리 문자열로 바꾸기 전에 IL2CPP 문자열의 UTF-16 버퍼에서 접두사(hwa_)를 직접 찾는다.
     /// </summary>
+    private const string Hook = "IResourceLocator.Locate";
+
     private static void Prefix(ref Il2CppSystem.Object __0)
     {
         var baseId = CustomSongs.s_baseSongId;
-        if (baseId == null || !CustomSongs.Injected) return;
+        if (baseId == null || !CustomSongs.Injected || HookGuard.IsDisabled(Hook)) return;
         var key = __0;
         if (key == null) return;
         try
@@ -167,7 +169,7 @@ internal static class AddressableKeyRedirect
             lock (s_logLock) first = s_loggedRedirects.Add(s);
             if (first) Core.Log.Msg($"[KeyRedirect] '{s}' -> '{redirected}'");
         }
-        catch (Exception e) { HookGuard.Fail("IResourceLocator.Locate", e); }
+        catch (Exception e) { HookGuard.Fail(Hook, e); }
     }
 
     private const int SelfCheckCount = 32;

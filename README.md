@@ -48,11 +48,11 @@ PLATiNA LAB\
       └─ cover.png         커버 (thumbnail.png, 封面.png, 曲绘.png 도 가능)
 ```
 
-곡 폴더는 이름순으로 읽혀 `hwa_001`, `hwa_002` … 의 ID가 붙습니다.
+곡 폴더는 `UserData\PLATiNALAB\song_ids.json`에 폴더명별로 영속 번호가 기록되어 `hwa_001`, `hwa_002` … 의 ID가 붙습니다(폴더를 추가·삭제해도 기존 곡 ID가 밀리지 않습니다).
 
 ### info.txt
 
-`키 : 값` 또는 `키 = 값` 형식입니다. 한국어, 영어, 중국어를 모두 지원합니다.
+`키 : 값` 또는 `키 = 값` 형식입니다. 한국어, 영어, 중국어를 모두 지원하며, 비워 둔 제목·아티스트·BPM·레벨은 같은 폴더 BMS 헤더(`#TITLE`, `#ARTIST`, `#BPM`, `#PLAYLEVEL`)에서 자동으로 채웁니다.
 
 ```
 title  : My Song
@@ -109,6 +109,9 @@ JudgmentBarSide=Center
 # 실시간 키뷰어 표시
 EnableKeyViewer=1
 KeyViewerPressedColor=#26BFD9D9
+
+# 진단용 상세 로그 패치 (기본 0 = 꺼짐, 문제 조사 시에만 1)
+DiagnosticLogs=0
 ```
 
 ## 기존 곡 차트 덮어쓰기

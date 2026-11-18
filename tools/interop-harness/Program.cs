@@ -365,16 +365,18 @@ static class P
         m.GetCustomAttributesData().Any(d => d.AttributeType.Name == name || d.AttributeType.Name == name + "Attribute");
 
     /// <summary>
-    /// [Body] 두 규칙을 IL로 확인한다.
+    /// [Body] 네 규칙을 IL로 확인한다.
     ///   1. 훅 진입점(Prefix/Postfix/Finalizer)은 게임 타입·멤버를 직접 참조하지 않는다 — 참조가 깨지면 훅 본문 JIT가 실패하고,
     ///      Il2CppInterop 트램펄린이 예외를 삼켜 원본 대신 기본값을 돌려주므로 일반 곡까지 그 게임 메서드가 망가진다 (HookGuard 설명).
     ///   2. catch가 있는 메서드가 게임 멤버를 직접 참조하면 그 catch는 바인딩 실패를 못 잡는다 (JIT 단계 예외, .NET 6 실측).
     ///      [Guarded] 메서드는 호출부가 감싸고 시작 시 사전 JIT로 점검하므로 제외한다.
+    ///   3. 게임 record의 ==/!= 연산자 호출 금지 (`is null` / `is not null` 사용).
+    ///   4. [MethodImpl(NoInlining)]으로 격리한 메서드가 게임 멤버를 직접 참조하면 [Guarded]를 붙여 사전 JIT 점검 대상에 포함해야 한다.
     /// </summary>
     static int VerifyMethodBodies(Assembly modAsm)
     {
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-        int hooks = 0, tries = 0, methods = 0, failed = 0;
+        int hooks = 0, tries = 0, noInlines = 0, methods = 0, failed = 0;
         foreach (var type in InteropNames.SafeGetTypes(modAsm))
         {
             bool patchClass = HasAttribute(type, "HarmonyPatch");
@@ -394,19 +396,24 @@ static class P
                 bool entry = (patchClass || type.Name == "AddressableKeyRedirect") && m.Name is "Prefix" or "Postfix" or "Finalizer";
                 bool guarded = HasAttribute(m, "Guarded");
                 bool hasCatch = m.GetMethodBody().ExceptionHandlingClauses.Any(c => c.Flags != ExceptionHandlingClauseOptions.Finally);
-                if (!entry && !(hasCatch && !guarded)) continue;
+                bool unguardedNoInline = !guarded && (m.MethodImplementationFlags & MethodImplAttributes.NoInlining) != 0;
+                if (!entry && !(hasCatch && !guarded) && !unguardedNoInline) continue;
                 // 자기 시그니처(인자·반환)에 이미 있는 게임 타입을 box/stobj 등 타입 토큰으로 쓰는 것은 새 의존성이 아니다
                 // (그 타입이 없으면 패치·호출 자체가 먼저 실패한다). 멤버(메서드·필드) 참조는 여전히 검사한다.
                 var own = new HashSet<string>(SignatureTypes(m).Select(t => t.FullName));
                 var refs = GameReferences(m).Where(r => !own.Contains(r) && !r.EndsWith(".op_Equality") && !r.EndsWith(".op_Inequality")).ToList();
-                if (entry) hooks++; else tries++;
+                if (entry) hooks++;
+                else if (hasCatch && !guarded) tries++;
+                else noInlines++;
                 if (refs.Count == 0) continue;
                 failed++;
-                var rule = entry ? "훅 본문이 게임 멤버를 직접 참조" : "catch가 있는 비[Guarded] 메서드가 게임 멤버를 직접 참조 (그 catch는 바인딩 실패를 못 잡음)";
+                var rule = entry ? "훅 본문이 게임 멤버를 직접 참조"
+                    : (hasCatch && !guarded) ? "catch가 있는 비[Guarded] 메서드가 게임 멤버를 직접 참조 (그 catch는 바인딩 실패를 못 잡음)"
+                    : "[NoInlining] 격리 메서드에 [Guarded] 누락 (사전 JIT 점검 대상에서 빠짐)";
                 Console.WriteLine($"   [FAIL Body] {type.FullName}.{m.Name}: {rule}: {string.Join(", ", refs.Take(6))}");
             }
         }
-        Console.WriteLine($"[Body] 메서드 {methods}개(==/!= 연산자), 훅 본문 {hooks}개, catch 있는 비[Guarded] 메서드 {tries}개 검사, 실패 {failed}개");
+        Console.WriteLine($"[Body] 메서드 {methods}개(==/!= 연산자), 훅 본문 {hooks}개, catch 있는 비[Guarded] {tries}개, 비[Guarded] NoInlining {noInlines}개 검사, 실패 {failed}개");
         return failed;
     }
 

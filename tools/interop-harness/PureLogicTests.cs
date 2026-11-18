@@ -85,6 +85,22 @@ internal static class PureLogicTests
             Console.WriteLine($"   [FAIL BmsConvert] bpms 필터링 실패: {bpms?.ToJsonString()}");
             failed++;
         }
+
+        // 난이도 정규화 다국어 회귀
+        var diffCases = new (string input, string expected)[]
+        {
+            ("", "easy"), ("EZ", "easy"), ("简单", "easy"), ("하드", "hard"),
+            ("专家", "over"), ("SP", "plus"), ("테스트", "testpattern"), ("custom_diff", "custom_diff"),
+        };
+        foreach (var (input, expected) in diffCases)
+        {
+            var actual = BmsConverter.NormalizeDifficulty(input);
+            if (actual != expected)
+            {
+                Console.WriteLine($"   [FAIL NormalizeDifficulty] '{input}' -> '{actual}' (기대 '{expected}')");
+                failed++;
+            }
+        }
         return failed;
     }
 
@@ -149,6 +165,15 @@ internal static class PureLogicTests
         if (mp4Sec == null || Math.Abs(mp4Sec.Value - 5.0) > 0.001)
         {
             Console.WriteLine($"   [FAIL MediaDuration.Mp4] {mp4Sec} (기대 5.0)");
+            failed++;
+        }
+
+        // 3) 손상된/빈 파일은 예외 없이 null 반환
+        var badPath = Path.Combine(tmp, "corrupt.bin");
+        File.WriteAllBytes(badPath, new byte[] { 0, 1, 2, 3, 4 });
+        if (MediaDuration.Ogg(badPath) != null || MediaDuration.Mp4(badPath) != null)
+        {
+            Console.WriteLine("   [FAIL MediaDuration] 손상된 파일에서 null이 아닌 값 반환");
             failed++;
         }
 

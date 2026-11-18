@@ -301,6 +301,20 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - **`[Body]`** (IL 읽기, `Module.ResolveMember`): ① 모든 메서드에서 게임 타입의 `op_Equality`/`op_Inequality` 호출 ② 훅 진입점(Prefix/Postfix/Finalizer)이 게임 타입·멤버를 직접 참조(자기 시그니처에 이미 있는 타입의 box/stobj 같은 타입 토큰은 제외 — 그 타입이 없으면 패치가 먼저 실패) ③ catch가 있는 비`[Guarded]` 메서드가 게임 멤버를 직접 참조. enum 상수는 IL에 숫자로 들어가므로 잡히지 않는다(= 실제로 타입 로드도 없음).
 - **`[BmsFind]`**: 아래 B7-1 회귀.
 
+### 정확성
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| B7-1 | `BmsConverter.FindFor` | 난이도 별칭을 파일명 부분 문자열로 찾아 `over`의 `ex`가 `next_hard.bms`에, `plus`의 `sp`가 `space.bms`에 걸림. 파일 순서가 별칭 순서보다 앞서 `a_ez.bms`가 `b_easy.bms`보다 먼저 선택됨 | 영문 별칭은 낱말(영문 글자 덩어리) 단위, 한글·중국어는 부분 문자열. 정확한 이름 → 정규화 이름 → 별칭 순 |
+| B7-2 | `ModConfig.Load` | 기본값으로 초기화한 **뒤에** 파일을 읽어서, 편집기가 저장하는 순간 읽기가 실패하면 로그는 "이전 값 유지"인데 실제로는 기본값(예: `AutoPlay` 꺼짐) | 끝까지 읽은 뒤 초기화·적용 |
+| B7-3 | `CustomSongs.Scan` | 한 곡 폴더의 읽기 예외가 스캔 전체를 실패시켜 커스텀 곡이 하나도 안 나옴 | 폴더별 `try`. 번호(곡 ID·패턴 번호)는 폴더 순서 그대로 두고 실패한 번호만 비움 (당기면 다른 곡의 ID가 바뀜) |
+
+### 확인 항목 (인게임)
+
+- `[HookGuard] 훅 바인딩 사전 점검 정상 (51개 메서드, …)`.
+- 선곡 화면 custom 카테고리 곡 표시·잠금 없음, 일반 곡 잠금 표시 그대로 (P7-1·P7-2 경로).
+- 커스텀 곡 플레이: 판정바·키뷰어 색과 글자(`PERFECT HIGH` 등), 올 퍼펙트, 오토 플레이 켬/끔 로그(`[AutoPlay] 끔 → Extra=Off`처럼 이름으로 찍히는지), 결과 화면.
+
 ## 8차 (2026-11-19): 전수 리팩토링, 병목 제거, 업데이트 내성 보강
 
 검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 50개·`[HarmonyPatch]` 26개·`[Required]` 10개·`[Layout]` 268개·`[Body]` 382개 메서드·`[BmsFind]` 8건·`[PureLogic]` 실패 0건. **인게임 실기 실행은 이 빌드로 미확인.**
@@ -325,19 +339,36 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 | P8-4 | `BmsConverter.Convert` | `OrderBy().ThenBy()` LINQ 할당 및 `Objects.Any`/`notes.Count` 3회 추가 순회 | in-place `notes.Sort` 및 변환 루프 내 직접 집계 |
 | P8-5 | `PlayOverlay.LoadRanges` / `ModConfig.ColorOf` | 일회성/색상 검사에 LINQ(`All`/`Zip`/`Skip`/`Take`/`Any`) 할당 | 단순 `for` 루프로 교체 |
 
-### 정확성
+## 9차 (2026-11-19): 폴백 도달성·격리 누락 해소, 스레드 안전성 보강, 하네스 `[Body]` 규칙 확장
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 54개·`[HarmonyPatch]` 26개·`[Required]` 10개·`[Layout]` 271개·`[Body]` 382개 메서드(비`[Guarded]` NoInlining 2개)·`[BmsFind]` 8건·`[TextSanitizer]` 10건·`[PureLogic]` 실패 0건, `NETSDK1138` 경고 0건. **인게임 실기 실행은 이 빌드로 미확인.**
+
+### 업데이트 내성 · 격리
 
 | # | 위치 | 문제 | 수정 |
 |---|---|---|---|
-| B7-1 | `BmsConverter.FindFor` | 난이도 별칭을 파일명 부분 문자열로 찾아 `over`의 `ex`가 `next_hard.bms`에, `plus`의 `sp`가 `space.bms`에 걸림. 파일 순서가 별칭 순서보다 앞서 `a_ez.bms`가 `b_easy.bms`보다 먼저 선택됨 | 영문 별칭은 낱말(영문 글자 덩어리) 단위, 한글·중국어는 부분 문자열. 정확한 이름 → 정규화 이름 → 별칭 순 |
-| B7-2 | `ModConfig.Load` | 기본값으로 초기화한 **뒤에** 파일을 읽어서, 편집기가 저장하는 순간 읽기가 실패하면 로그는 "이전 값 유지"인데 실제로는 기본값(예: `AutoPlay` 꺼짐) | 끝까지 읽은 뒤 초기화·적용 |
-| B7-3 | `CustomSongs.Scan` | 한 곡 폴더의 읽기 예외가 스캔 전체를 실패시켜 커스텀 곡이 하나도 안 나옴 | 폴더별 `try`. 번호(곡 ID·패턴 번호)는 폴더 순서 그대로 두고 실패한 번호만 비움 (당기면 다른 곡의 ID가 바뀜) |
+| U9-1 | `SongCategoryResourceCollection_GetDataSet_Patch.Create` | `[Guarded]` 이름이 `Postfix`의 `Hook`과 같아, `Create` 사전 JIT 실패 시 `GetDataSet` 훅 전체가 꺼져 `CreateFallback`에 도달 불가 | `Create`의 `[Guarded]` 이름을 `SongCategoryResourceCollection.CreateDirect`로 분리, `CreateOrFallback`에서 해당 키만 검사해 폴백 유지. `SetTextRenderTypeDirect`에도 `[Guarded]` 추가 |
+| U9-2 | `OfflineSession` (`FinalScore`, `ReadMasteryRawDirect`, `RenewGameSession`) | `[NoInlining]` 게임 멤버 헬퍼 2건에 `[Guarded]` 누락, `RenewGameSession`에서 `HookGuard.IsDisabled` 미확인 | `[Guarded]` 2건 추가 및 `RenewGameSession`에 `IsDisabled` 가드 추가 |
+| U9-3 | `SongInfo_IsLock_Patch`, `SongInfo_IsNewSongMarkTarget_Patch`, `AddressableKeyRedirect.Prefix` | `HookGuard.Fail`로 비활성화 기록은 하지만 진입부에서 `HookGuard.IsDisabled`를 확인하지 않아 바인딩 실패 시 매 호출 예외 반복 가능 | 세 훅 모두 진입부에 `HookGuard.IsDisabled` 가드 추가 |
+| U9-4 | `PlayAssist.ForcePerfect` / `SetPerfectDirect` | `SetPerfectDirect`에 `[Guarded]` 누락, 바인딩 실패 시 노트마다 예외 후 리플렉션 폴백 반복 | `SetPerfectDirect`에 보고용 `[Guarded("PlayAssist.SetPerfectDirect")]` 추가, 실패 시 해당 경로만 꺼서 이후 노트는 예외 없이 즉시 리플렉션 폴백 |
+| U9-5 | `DiagnosticPatches.Apply` | 게임 타입 5종을 `typeof(...)`로 한 메서드에 직접 참조해 한 타입만 바뀌어도 나머지 진단 패치까지 JIT 실패 | `AccessTools.TypeByName` 문자열 조회로 개별 격리, `LogUpdatePostProcess` null 비교를 `is null`로 통일 |
+| U9-6 | `UpdateResilience.TryCast<T>` | `SafeSetFieldOrProperty`는 `Nullable`/`Enum` 변환을 지원하지만 `SafeGetFieldOrProperty`는 미지원 | `Nullable.GetUnderlyingType` 및 `Enum` 변환 대칭 지원, 미사용 `using` 제거 |
+| U9-7 | `tools/interop-harness` | `[NoInlining]` 격리 헬퍼에 `[Guarded]`를 빠뜨려도 기계 검사가 잡지 못함, `InteropHarness.csproj`에서 `NETSDK1138` 경고 출력 | `[Body]` 규칙 ④(비`[Guarded]` `NoInlining` 메서드의 게임 멤버 직접 참조 금지) 추가, `NormalizeDifficulty`·손상 미디어 파일 회귀 테스트 추가, `CheckEolTargetFramework=false` 설정 |
+
+### 스레드 안전성 · 방어
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| Q9-1 | `CustomSongs` (`Current`, `s_baseFileName`, `s_baseSongId`), `CustomMedia.PreviewSong` | 메인·입력(HFTask)·오디오·Addressables 스레드가 공유하는 정적 필드에 `volatile` 누락 | `volatile` 지정 |
+| Q9-2 | `CustomSongs.ExtendToMediaLength` | 커스텀 JSON에 `initialBpm <= 0`이 들어오면 잘못된 `endPosition` 계산 가능 | `bpm <= 0`이면 기본 `120` 사용 |
+| Q9-3 | `CustomMedia.GetCover` | 2차 lock 구간에 `MaxCoverCache` 상한 재검사 없어 동시 로드 시 상한 초과 가능 | 2차 lock 삽입 직전 `MaxCoverCache` 퇴거 루프 추가 |
+| Q9-4 | `CustomSongs.cs`, `CustomSongPatches.cs` | 리팩토링 후 남은 미사용 `using` | 정리 |
 
 ### 확인 항목 (인게임)
 
-- `[HookGuard] 훅 바인딩 사전 점검 정상 (51개 메서드, …)`.
-- 선곡 화면 custom 카테고리 곡 표시·잠금 없음, 일반 곡 잠금 표시 그대로 (P7-1·P7-2 경로).
-- 커스텀 곡 플레이: 판정바·키뷰어 색과 글자(`PERFECT HIGH` 등), 올 퍼펙트, 오토 플레이 켬/끔 로그(`[AutoPlay] 끔 → Extra=Off`처럼 이름으로 찍히는지), 결과 화면.
+- `[HookGuard] 훅 바인딩 사전 점검 정상 (54개 메서드, …)`.
+- 선곡 화면 custom 카테고리 표시·잠금 없음, 일반 곡 잠금 표시 그대로.
+- 커스텀 곡 플레이: 판정바·키뷰어, 올 퍼펙트, 오토 플레이 켬/끔, 결과 화면.
 
 ## 게임 업데이트 후 확인 순서
 

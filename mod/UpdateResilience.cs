@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Reflection;
-using Il2CppInterop.Runtime;
 
 namespace PLATiNALAB.Mod;
 
@@ -101,12 +100,22 @@ internal static class UpdateResilience
     private static bool TryCast<T>(object raw, out T value)
     {
         if (raw is T direct) { value = direct; return true; }
-        if (raw != null && raw is IConvertible && typeof(IConvertible).IsAssignableFrom(typeof(T)))
+        if (raw != null)
         {
+            var underlying = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
             try
             {
-                value = (T)Convert.ChangeType(raw, typeof(T), CultureInfo.InvariantCulture);
-                return true;
+                if (underlying.IsEnum)
+                {
+                    object parsed = raw is string s ? Enum.Parse(underlying, s, ignoreCase: true) : Enum.ToObject(underlying, raw);
+                    value = (T)parsed;
+                    return true;
+                }
+                if (raw is IConvertible && typeof(IConvertible).IsAssignableFrom(underlying))
+                {
+                    value = (T)Convert.ChangeType(raw, underlying, CultureInfo.InvariantCulture);
+                    return true;
+                }
             }
             catch { }
         }
