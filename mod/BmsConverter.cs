@@ -52,6 +52,7 @@ internal static class BmsConverter
     public const int PitchKey = 255;
     private static readonly string[] DefaultChannelOrder = { "16", "11", "12", "13", "14", "15", "18", "19" };
     private static readonly string[] Extensions = { ".bms", ".bme", ".bml", ".pms" };
+    private static readonly char[] HeaderSeparators = { ' ', '\t' };
 
     private static readonly Dictionary<string, string[]> DifficultyAliases = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -162,7 +163,7 @@ internal static class BmsConverter
                 continue;
             }
 
-            int space = line.IndexOf(' ');
+            int space = line.IndexOfAny(HeaderSeparators);
             if (space < 0) continue;
             var key = line[1..space].ToUpperInvariant();
             var arg = line[(space + 1)..].Trim();
@@ -244,7 +245,11 @@ internal static class BmsConverter
 
             if (channel != o.Channel) // 51~59 / 61~69: LNTYPE 1 시작·끝 쌍
             {
-                if (openLnType.Remove(channel, out var s)) notes.Add((s.pos, pos, lane));
+                if (openLnType.Remove(channel, out var s))
+                {
+                    if (pos > s.pos) notes.Add((s.pos, pos, lane));
+                    else { notes.Add((s.pos, null, s.lane)); unpaired++; }
+                }
                 else openLnType[channel] = (pos, lane);
                 continue;
             }
@@ -253,7 +258,8 @@ internal static class BmsConverter
                 if (lastShort.Remove(channel, out var idx))
                 {
                     var prev = notes[idx];
-                    notes[idx] = (prev.start, pos, prev.key);
+                    if (pos > prev.start) notes[idx] = (prev.start, pos, prev.key);
+                    else unpaired++;
                 }
                 continue;
             }
@@ -270,7 +276,11 @@ internal static class BmsConverter
                     openHold[channel] = (pos, lane);
                     break;
                 case Role.HoldEnd:
-                    if (openHold.Remove(channel, out var start)) notes.Add((start.pos, pos, lane));
+                    if (openHold.Remove(channel, out var start))
+                    {
+                        if (pos > start.pos) notes.Add((start.pos, pos, lane));
+                        else { notes.Add((start.pos, null, start.lane)); unpaired++; }
+                    }
                     else unpaired++;
                     break;
                 case Role.Pitch:

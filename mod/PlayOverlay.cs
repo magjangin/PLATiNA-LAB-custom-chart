@@ -387,7 +387,8 @@ internal static class PlayOverlay
         if (s_ticks.Count < activeCount)
         {
             while (s_ticks.Count < activeCount) s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
-            s_label.transform.SetAsLastSibling(); // 새 틱이 글자를 덮지 않게
+            s_labelShadow.transform.SetAsLastSibling(); // 새 틱이 글자·그림자를 덮지 않게
+            s_label.transform.SetAsLastSibling();
             s_ticksPlacedVersion = -1;
         }
         // 틱 위치는 판정이 들어오거나 만료되거나 배치가 바뀔 때만 다시 잡는다. 매 프레임은 투명도(색)만 바꾼다.

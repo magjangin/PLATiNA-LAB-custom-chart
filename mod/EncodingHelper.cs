@@ -177,27 +177,20 @@ internal static class EncodingHelper
         return score;
     }
 
+    // RFC 3629 엄격 UTF-8 검증기. 수동 비트 검사는 과장 인코딩(0xC0/0xC1)·서로게이트(ED A0..BF)·U+10FFFF 초과를
+    // 유효 UTF-8로 오판해 CP949/GBK 바이트(예: 0xC0 0xA1)를 UTF-8로 잘못 디코딩할 수 있다.
+    private static readonly UTF8Encoding s_strictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     private static bool IsValidUtf8(byte[] bytes)
     {
-        int i = 0;
-        int len = bytes.Length;
-        while (i < len)
+        try
         {
-            byte b = bytes[i++];
-            if (b <= 0x7F) continue; // ASCII
-            int count;
-            if ((b & 0xE0) == 0xC0) count = 1;
-            else if ((b & 0xF0) == 0xE0) count = 2;
-            else if ((b & 0xF8) == 0xF0) count = 3;
-            else return false;
-
-            if (i + count > len) return false;
-            for (int j = 0; j < count; j++)
-            {
-                byte next = bytes[i++];
-                if ((next & 0xC0) != 0x80) return false;
-            }
+            s_strictUtf8.GetCharCount(bytes);
+            return true;
         }
-        return true;
+        catch (DecoderFallbackException)
+        {
+            return false;
+        }
     }
 }

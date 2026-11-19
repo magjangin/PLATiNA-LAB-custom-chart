@@ -101,6 +101,15 @@ internal static class PureLogicTests
                 failed++;
             }
         }
+        // 탭 구분자 BMS 헤더(#TITLE\t..., #WAV01\t...) 지원 회귀
+        var tabBmsPath = Path.Combine(tmp, "tab_header.bms");
+        File.WriteAllText(tabBmsPath, "#TITLE\tTab Song\n#ARTIST\tTab Artist\n#BPM\t140\n#WAV01\tShortNote.wav\n#00116:0100\n");
+        var tabHdr = BmsConverter.ParseHeader(tabBmsPath);
+        if (tabHdr.Title != "Tab Song" || tabHdr.Artist != "Tab Artist" || Math.Abs(tabHdr.Bpm - 140) > 0.001)
+        {
+            Console.WriteLine($"   [FAIL BmsTabHeader] title='{tabHdr.Title}' artist='{tabHdr.Artist}' bpm={tabHdr.Bpm}");
+            failed++;
+        }
         return failed;
     }
 
@@ -126,6 +135,13 @@ internal static class PureLogicTests
                 Console.WriteLine($"   [FAIL Encoding:{name}] '{(lines.Length > 0 ? lines[0] : "")}' (기대 '{text}')");
                 failed++;
             }
+        }
+        // 과장 UTF-8 시퀀스(0xC0 0xA1 — CP949/GBK 유효 바이트)가 UTF-8로 오판되지 않아야 한다
+        var overlongBytes = new byte[] { 0xC0, 0xA1, 0xB0, 0xA1 };
+        if (EncodingHelper.DetectEncoding(overlongBytes).CodePage == 65001)
+        {
+            Console.WriteLine("   [FAIL Encoding:overlong] 과장 UTF-8 시퀀스(0xC0 0xA1)를 UTF-8로 오판");
+            failed++;
         }
         return failed;
     }
@@ -180,6 +196,26 @@ internal static class PureLogicTests
         if (mp4Sec == null || Math.Abs(mp4Sec.Value - 5.0) > 0.001)
         {
             Console.WriteLine($"   [FAIL MediaDuration.Mp4] {mp4Sec} (기대 5.0)");
+            failed++;
+        }
+
+        // 2-b) MP4 길이 미정(duration=0xFFFFFFFF, fragmented/streamed) 및 알 수 없는 버전(2)은 null 반환
+        var mp4UndefPath = Path.Combine(tmp, "test_undef.mp4");
+        var mp4Undef = (byte[])mp4.Clone();
+        BinaryPrimitives.WriteUInt32BigEndian(mp4Undef.AsSpan(32, 4), uint.MaxValue);
+        File.WriteAllBytes(mp4UndefPath, mp4Undef);
+        if (MediaDuration.Mp4(mp4UndefPath) != null)
+        {
+            Console.WriteLine($"   [FAIL MediaDuration.Mp4] 길이 미정(0xFFFFFFFF)에서 null이 아닌 값 반환");
+            failed++;
+        }
+        var mp4BadVerPath = Path.Combine(tmp, "test_badver.mp4");
+        var mp4BadVer = (byte[])mp4.Clone();
+        mp4BadVer[16] = 2; // mvhd version = 2 (비표준)
+        File.WriteAllBytes(mp4BadVerPath, mp4BadVer);
+        if (MediaDuration.Mp4(mp4BadVerPath) != null)
+        {
+            Console.WriteLine($"   [FAIL MediaDuration.Mp4] 알 수 없는 mvhd 버전(2)에서 null이 아닌 값 반환");
             failed++;
         }
 

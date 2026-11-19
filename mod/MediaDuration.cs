@@ -89,21 +89,29 @@ internal static class MediaDuration
             if (moov == null) return null;
             var mvhd = FindBox(fs, moov.Value.start, moov.Value.end, "mvhd"u8);
             if (mvhd == null) return null;
+            long bodyLen = mvhd.Value.end - mvhd.Value.start;
+            if (bodyLen < 20) return null;
             fs.Position = mvhd.Value.start;
-            var buf = new byte[32];
-            ReadFully(fs, buf, 0, buf.Length);
+            int toRead = (int)Math.Min(32, bodyLen);
+            var buf = new byte[toRead];
+            ReadFully(fs, buf, 0, toRead);
             if (buf[0] == 1) // version 1: 64비트 시간
             {
+                if (toRead < 32) return null;
                 uint scale = BinaryPrimitives.ReadUInt32BigEndian(buf.AsSpan(20));
                 ulong dur = BinaryPrimitives.ReadUInt64BigEndian(buf.AsSpan(24));
-                return scale > 0 ? dur / (double)scale : null;
+                // ISO/IEC 14496-12: 모든 비트가 1(ulong.MaxValue)이면 "길이 미정(fragmented/streamed)"
+                if (scale == 0 || dur == 0 || dur == ulong.MaxValue) return null;
+                return dur / (double)scale;
             }
-            else
+            if (buf[0] == 0) // version 0: 32비트 시간
             {
                 uint scale = BinaryPrimitives.ReadUInt32BigEndian(buf.AsSpan(12));
                 uint dur = BinaryPrimitives.ReadUInt32BigEndian(buf.AsSpan(16));
-                return scale > 0 ? dur / (double)scale : null;
+                if (scale == 0 || dur == 0 || dur == uint.MaxValue) return null;
+                return dur / (double)scale;
             }
+            return null;
         }
         catch (Exception e) { Core.Log.Warning($"[MediaDuration] mp4 길이 읽기 실패: {e.Message}"); }
         return null;
@@ -122,12 +130,15 @@ internal static class MediaDuration
             int headerSize = 8;
             if (size == 1)
             {
+                if (pos + 16 > to) return null;
                 ReadFully(fs, header, 8, 8);
-                size = (long)BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(8));
+                ulong wide = BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(8));
+                if (wide > (ulong)(to - pos)) return null;
+                size = (long)wide;
                 headerSize = 16;
             }
             else if (size == 0) size = to - pos;
-            if (size < headerSize) return null;
+            if (size < headerSize || size > to - pos) return null;
             if (header.AsSpan(4, 4).SequenceEqual(type)) return (pos + headerSize, pos + size);
             pos += size;
         }

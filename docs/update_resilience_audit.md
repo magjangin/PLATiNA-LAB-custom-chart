@@ -442,6 +442,25 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - 커스텀 곡 스캔 후 `UserData\PLATiNALAB\song_ids.json`과 `song_ids.json.bak`(두 번째 저장부터)이 생기고 곡 번호가 유지되는지.
 - 커스텀 곡 결과 화면: `SendGameEnd 서버 전송 생략` 로그(정상 경로는 `IsCustom`이라 동작 변화 없음).
 
+## 13차 (2026-11-20): Harmony 인자 바인딩 오프라인 검증(`[PatchArgs]`), MP4·UTF-8·BMS·오버레이 경계값 수정
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 54개·`[HarmonyPatch]` 26개·신규 `[PatchArgs]` 30개 메서드·`[Required]` 10개·`[Layout]` 283개·`[Body]` 390개 메서드·`[Diag]` 5개·`[NativeField]` 2개·`[BmsFind]` 8건·`[TextSanitizer]` 10건·`[PureLogic]` 실패 0건(MP4 길이 미정·비표준 버전, 과장 UTF-8, 탭 구분 BMS 헤더 회귀 추가)·`[Reflect]` 35개·`[GuardKey]`·`[Mark]` 4종·`[Fingerprint]` 3항목 실패 0. **인게임 실기 실행은 이 빌드로 미확인.**
+
+### 업데이트 내성 · 하네스 신규 검사
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| U13-1 | `tools/interop-harness/Program.cs` (`[PatchArgs]`) | `[HarmonyPatch]`는 대상 메서드 존재만 확인했고, `Prefix`/`Postfix`/`Finalizer`의 이름 바인딩 인자(`patternId`, `songId`, `patternStream` 등)와 `__instance`/`__result`/`__0`/`__state`가 대상 시그니처와 맞는지 검증하지 않았다. 게임 업데이트로 인자 이름이 바뀌면 빌드·하네스가 모두 통과한 뒤 런타임 Harmony 패치 시점에 실패한다 | `VerifyPatchMethodParameters` 추가 — 26개 `[HarmonyPatch]` 클래스의 30개 패치 메서드 인자 이름·타입·특수 파라미터 바인딩을 실제 인터롭 `MethodInfo`와 오프라인 대조 |
+
+### 정확성 · 경계값 수정
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C13-1 | `MediaDuration.ReadMp4` / `FindBox` | ISO/IEC 14496-12의 길이 미정(`0xFFFFFFFF`/`ulong.MaxValue`, fragmented/streamed MP4)을 그대로 초로 나눠 49.7일 등으로 오판 가능, `mvhd` 버전 0/1 외 바이트를 버전 0으로 처리, 64비트 확장 박스 크기(`size == 1`) 경계·오버플로 미검사 | `version` 0/1 명시 검증, `0`/`uint.MaxValue`/`ulong.MaxValue`는 `null` 반환, `FindBox` 범위·오버플로 검사 및 `PureLogicTests` 회귀 추가 |
+| C13-2 | `EncodingHelper.IsValidUtf8` | 수동 비트 검사가 과장 UTF-8(`0xC0`/`0xC1`), 서로게이트(`ED A0..BF`), `U+10FFFF` 초과를 허용해 CP949/GBK 유효 바이트(`0xC0 0xA1` 등)를 UTF-8로 오판 가능 | RFC 3629 엄격 `UTF8Encoding(false, throwOnInvalidBytes: true)` 기반으로 교체 + 회귀 테스트 추가 |
+| C13-3 | `BmsConverter.Parse` / `Convert` | 헤더 구분자가 공백(`' '`)만 허용돼 탭(`#TITLE\t...`, `#WAV01\t...`) 헤더를 무시, 롱노트 끝 위치가 시작 이하(`pos <= start`)여도 0길이 롱노트 생성 | `HeaderSeparators = { ' ', '\t' }` 지원, `pos <= start` 롱노트는 단노트/경고로 방어 + 회귀 테스트 추가 |
+| C13-4 | `PlayOverlay.UpdateJudgmentBar` | 새 판정 틱(`TickN`)을 추가할 때 `s_label`만 `SetAsLastSibling()`을 호출해 `s_labelShadow`가 새 틱 뒤로 가려짐 | `s_labelShadow.transform.SetAsLastSibling()`을 `s_label` 직전에 함께 호출 |
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

@@ -241,6 +241,7 @@ static class P
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
         int guardedCount = 0, guardedFailed = 0;
         int patchCount = 0, patchFailed = 0;
+        int patchArgMethods = 0, patchArgFailed = 0;
 
         foreach (var type in InteropNames.SafeGetTypes(modAsm))
         {
@@ -248,10 +249,14 @@ static class P
             {
                 if (data.AttributeType.Name != "HarmonyPatch" && data.AttributeType.Name != "HarmonyPatchAttribute") continue;
                 patchCount++;
-                if (!VerifyHarmonyPatch(type, data, out var error))
+                if (!VerifyHarmonyPatch(type, data, out var target, out var error))
                 {
                     patchFailed++;
                     Console.WriteLine($"   [FAIL HarmonyPatch] {type.FullName}: {error}");
+                }
+                else
+                {
+                    patchArgFailed += VerifyPatchMethodParameters(type, target, ref patchArgMethods);
                 }
             }
 
@@ -281,6 +286,7 @@ static class P
 
         Console.WriteLine($"[Guarded] 사전 JIT 검증: {guardedCount}개 중 실패 {guardedFailed}개");
         Console.WriteLine($"[HarmonyPatch] 타깃 존재 검증: {patchCount}개 중 실패 {patchFailed}개");
+        Console.WriteLine($"[PatchArgs] Harmony 패치 인자 바인딩 검증: 메서드 {patchArgMethods}개 중 실패 {patchArgFailed}개");
 
         // ModHealth.s_requiredPatches의 모든 이름이 실제 [HarmonyPatch] 타깃과 일치하는지 (오타·리팩토링으로 어긋나면
         // 게임에서 항상 "필수 패치 누락"으로 커스텀 곡이 꺼지므로 오프라인에서 먼저 잡는다)
@@ -311,7 +317,7 @@ static class P
         int guardKeyFailed = ReflectCheck.RunGuardKeys(modAsm);
         int markFailed = ReflectCheck.RunMarkKeys(modAsm);
         int fingerprintFailed = VerifyFingerprint(modAsm);
-        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0
+        return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && patchArgFailed == 0 && requiredFailed == 0
             && layoutFailed == 0 && bodyFailed == 0 && diagFailed == 0 && nativeFailed == 0 && bmsFailed == 0 && reflectFailed == 0 && guardKeyFailed == 0
             && markFailed == 0 && fingerprintFailed == 0;
     }
@@ -624,8 +630,9 @@ static class P
 
     static readonly HashSet<string> PatchedKeys = new();
 
-    static bool VerifyHarmonyPatch(Type patchClass, CustomAttributeData data, out string error)
+    static bool VerifyHarmonyPatch(Type patchClass, CustomAttributeData data, out MethodInfo resolved, out string error)
     {
+        resolved = null;
         Type targetType = null;
         string methodName = null;
         int? methodType = null;
@@ -661,31 +668,118 @@ static class P
         if (methodType == 1) // Getter
         {
             var prop = targetType.GetProperty(methodName, any);
-            if (prop?.GetGetMethod(true) != null || targetType.GetMethod("get_" + methodName, any) != null)
-            { error = null; return true; }
+            resolved = prop?.GetGetMethod(true) ?? targetType.GetMethod("get_" + methodName, any);
+            if (resolved != null) { error = null; return true; }
             error = $"{targetType.FullName}.{methodName} (Getter) 없음";
             return false;
         }
         if (methodType == 2) // Setter
         {
             var prop = targetType.GetProperty(methodName, any);
-            if (prop?.GetSetMethod(true) != null || targetType.GetMethod("set_" + methodName, any) != null)
-            { error = null; return true; }
+            resolved = prop?.GetSetMethod(true) ?? targetType.GetMethod("set_" + methodName, any);
+            if (resolved != null) { error = null; return true; }
             error = $"{targetType.FullName}.{methodName} (Setter) 없음";
             return false;
         }
         if (argTypes != null)
         {
-            var m = targetType.GetMethod(methodName, any, null, argTypes, null);
-            if (m != null) { error = null; return true; }
+            resolved = targetType.GetMethod(methodName, any, null, argTypes, null);
+            if (resolved != null) { error = null; return true; }
             error = $"{targetType.FullName}.{methodName}({string.Join(", ", argTypes.Select(t => t?.Name ?? "?"))}) 없음";
             return false;
         }
         var matches = targetType.GetMethods(any).Where(m => m.Name == methodName).ToArray();
-        if (matches.Length == 1) { error = null; return true; }
+        if (matches.Length == 1) { resolved = matches[0]; error = null; return true; }
         error = matches.Length == 0
             ? $"{targetType.FullName}.{methodName} 없음"
             : $"{targetType.FullName}.{methodName} 오버로드 {matches.Length}개 (AmbiguousMatch 위험)";
         return false;
+    }
+
+    /// <summary>
+    /// [PatchArgs] Harmony Prefix/Postfix/Finalizer의 인자 이름·타입이 대상 메서드 시그니처와 실제로 바인딩되는지 검증한다.
+    /// 게임 업데이트로 대상 메서드의 인자 이름이 바뀌면 컴파일도 통과하고 타깃 존재 검사도 통과하지만, 런타임 Harmony 패치 시점에 실패한다.
+    /// </summary>
+    static int VerifyPatchMethodParameters(Type patchClass, MethodInfo target, ref int checkedMethods)
+    {
+        const BindingFlags declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var patchMethods = patchClass.GetMethods(declared).Where(m => m.Name is "Prefix" or "Postfix" or "Finalizer").ToArray();
+        var targetParams = target.GetParameters();
+        var targetByName = targetParams.ToDictionary(p => p.Name, p => p, StringComparer.Ordinal);
+        bool prefixHasState = patchMethods.Any(m => m.Name == "Prefix" && m.GetParameters().Any(p => p.Name == "__state"));
+        int failed = 0;
+
+        foreach (var pm in patchMethods)
+        {
+            checkedMethods++;
+            foreach (var p in pm.GetParameters())
+            {
+                var pType = p.ParameterType.IsByRef ? p.ParameterType.GetElementType() : p.ParameterType;
+                if (p.Name == "__instance")
+                {
+                    if (target.IsStatic)
+                    {
+                        failed++;
+                        Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: static 대상 {target.DeclaringType?.Name}.{target.Name}에 __instance 사용");
+                    }
+                    else if (target.DeclaringType != null && !pType.IsAssignableFrom(target.DeclaringType))
+                    {
+                        failed++;
+                        Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: __instance 타입 불일치 ({pType.Name} vs {target.DeclaringType.Name})");
+                    }
+                    continue;
+                }
+                if (p.Name == "__result")
+                {
+                    if (target.ReturnType == typeof(void))
+                    {
+                        failed++;
+                        Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: void 대상에 __result 사용");
+                    }
+                    else if (!pType.IsAssignableFrom(target.ReturnType) && !target.ReturnType.IsAssignableFrom(pType))
+                    {
+                        failed++;
+                        Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: __result 타입 불일치 ({pType.Name} vs {target.ReturnType.Name})");
+                    }
+                    continue;
+                }
+                if (p.Name == "__state")
+                {
+                    if (pm.Name != "Prefix" && !prefixHasState)
+                    {
+                        failed++;
+                        Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: Prefix에 __state가 없는데 {pm.Name}에서 __state 사용");
+                    }
+                    continue;
+                }
+                if (p.Name is "__originalMethod" or "__exception" or "__runOriginal" or "__args") continue;
+
+                ParameterInfo tp = null;
+                if (p.Name.StartsWith("__", StringComparison.Ordinal) && int.TryParse(p.Name.AsSpan(2), out int idx))
+                {
+                    if (idx < 0 || idx >= targetParams.Length)
+                    {
+                        failed++;
+                        Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: 위치 인자 {p.Name} 범위 초과 (대상 인자 {targetParams.Length}개)");
+                        continue;
+                    }
+                    tp = targetParams[idx];
+                }
+                else if (!targetByName.TryGetValue(p.Name, out tp))
+                {
+                    failed++;
+                    Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: 대상 {target.DeclaringType?.Name}.{target.Name}에 인자 '{p.Name}' 없음 (실제: {string.Join(", ", targetParams.Select(x => x.Name))})");
+                    continue;
+                }
+
+                var tType = tp.ParameterType.IsByRef ? tp.ParameterType.GetElementType() : tp.ParameterType;
+                if (!pType.IsAssignableFrom(tType) && !tType.IsAssignableFrom(pType))
+                {
+                    failed++;
+                    Console.WriteLine($"   [FAIL PatchArgs] {patchClass.Name}.{pm.Name}: 인자 '{p.Name}' 타입 불일치 ({pType.Name} vs {tType.Name})");
+                }
+            }
+        }
+        return failed;
     }
 }
