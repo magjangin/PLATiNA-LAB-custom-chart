@@ -1,5 +1,5 @@
 // 오프라인 인터롭 하네스 — 게임을 실행하지 않고 MelonLoader가 만든 인터롭 어셈블리로 검증한다.
-//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수, 모드 [Guarded]/[HarmonyPatch]/[Required]/[Layout]/[Body]/[Diag]/[NativeField]/[BmsFind]/[Reflect]/[GuardKey] 검증 (종료 코드 0 = 통과)
+//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수, 모드 [Guarded]/[HarmonyPatch]/[Required]/[Layout]/[Body]/[Diag]/[NativeField]/[BmsFind]/[Reflect]/[GuardKey]/[Mark]/[Fingerprint] 검증 (종료 코드 0 = 통과)
 //   dotnet run -c Release -- explore : 컴파일러 생성 타입의 멤버(프로퍼티) 이름 빈도 (멤버 모양 신호 조사용)
 // 정답 기준: 인터롭 [ObfuscatedName]의 원래 이름(마지막 중첩 이름)에 '<'가 있거나, 이름에 '<'가 그대로 남은 타입.
 // 게임 경로는 환경 변수 PLATINALAB_GAME, 모드 DLL 경로는 PLATINALAB_MOD로 바꿀 수 있다.
@@ -163,6 +163,53 @@ static class P
             }
         }
         Console.WriteLine($"Locate 엄격 조건 {found.Count}건 (컴파일러 생성 제외 {skipped}): {string.Join(", ", found)}");
+        s_strictLocateCount = found.Count;
+    }
+
+    static int s_strictLocateCount = -1;
+
+    /// <summary>
+    /// [Fingerprint] ModHealth의 검증 기준(Build ID·GameAssembly.dll 크기·Locate 구현체 수)이 지금 설치된 게임과 맞는지.
+    /// 업데이트 후 확인 순서 4단계("검증 기준 갱신")를 잊으면 게임 로그의 [Health] 경고가 항상 뜨거나, 반대로 바뀐 게임을
+    /// "검증된 빌드"로 착각하게 된다. 불일치는 실패로 보고 갱신할 값을 알려 준다.
+    /// </summary>
+    static int VerifyFingerprint(Assembly modAsm)
+    {
+        var health = modAsm.GetType("PLATiNALAB.Mod.ModHealth");
+        object Const(string name) => health?.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)?.GetRawConstantValue();
+        int failed = 0;
+        var build = Const("TestedBuildId") as string;
+        var size = Const("TestedGameAssemblySize") as long?;
+        var locate = Const("TestedLocateCount") as int?;
+        if (build == null || size == null || locate == null)
+        {
+            Console.WriteLine("   [FAIL Fingerprint] ModHealth.TestedBuildId/TestedGameAssemblySize/TestedLocateCount 상수를 찾지 못함");
+            return 1;
+        }
+        var manifest = Path.GetFullPath(Path.Combine(Game, "..", "..", "appmanifest_3430470.acf"));
+        if (File.Exists(manifest))
+        {
+            var m = Regex.Match(File.ReadAllText(manifest), @"""buildid""\s+""(\d+)""");
+            if (m.Success && m.Groups[1].Value != build)
+            {
+                failed++;
+                Console.WriteLine($"   [FAIL Fingerprint] 매니페스트 buildid {m.Groups[1].Value} ≠ ModHealth.TestedBuildId {build}");
+            }
+        }
+        else Console.WriteLine($"   (매니페스트 없음, buildid 대조 생략: {manifest})");
+        var dll = new FileInfo(Path.Combine(Game, "GameAssembly.dll"));
+        if (dll.Exists && dll.Length != size)
+        {
+            failed++;
+            Console.WriteLine($"   [FAIL Fingerprint] GameAssembly.dll {dll.Length}바이트 ≠ ModHealth.TestedGameAssemblySize {size}");
+        }
+        if (s_strictLocateCount >= 0 && s_strictLocateCount != locate)
+        {
+            failed++;
+            Console.WriteLine($"   [FAIL Fingerprint] Locate 엄격 조건 {s_strictLocateCount}건 ≠ ModHealth.TestedLocateCount {locate}");
+        }
+        Console.WriteLine($"[Fingerprint] 검증 기준(빌드 {build}, GameAssembly {size}바이트, Locate {locate}건) 대조 실패 {failed}개");
+        return failed;
     }
 
     static string FindModDll()
@@ -262,8 +309,11 @@ static class P
         int bmsFailed = VerifyBmsFindFor(modAsm);
         int reflectFailed = ReflectCheck.Run(modAsm, Interop);
         int guardKeyFailed = ReflectCheck.RunGuardKeys(modAsm);
+        int markFailed = ReflectCheck.RunMarkKeys(modAsm);
+        int fingerprintFailed = VerifyFingerprint(modAsm);
         return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0
-            && layoutFailed == 0 && bodyFailed == 0 && diagFailed == 0 && nativeFailed == 0 && bmsFailed == 0 && reflectFailed == 0 && guardKeyFailed == 0;
+            && layoutFailed == 0 && bodyFailed == 0 && diagFailed == 0 && nativeFailed == 0 && bmsFailed == 0 && reflectFailed == 0 && guardKeyFailed == 0
+            && markFailed == 0 && fingerprintFailed == 0;
     }
 
     /// <summary>[Diag] DiagnosticPatches.s_targets의 문자열 타깃 5종이 실제 인터롭에 존재하는지 검증.</summary>

@@ -52,6 +52,11 @@ internal static class MediaDuration
             if (vorbis < 0 || vorbis + 16 > headSize) return null;
             uint rate = BinaryPrimitives.ReadUInt32LittleEndian(headBuf.AsSpan(vorbis + 12));
             if (rate == 0) return null;
+            // 첫 페이지의 비트스트림 일련번호. 끝부분 역탐색에서 오디오 데이터 속 우연한 "OggS" 바이트나
+            // 다른 논리 스트림의 페이지를 마지막 페이지로 오인하지 않도록 같은 일련번호만 받는다.
+            uint? serial = headSize >= 27 && headBuf.AsSpan(0, 4).SequenceEqual("OggS"u8)
+                ? BinaryPrimitives.ReadUInt32LittleEndian(headBuf.AsSpan(14))
+                : null;
 
             // 2. 뒷부분(최대 64KB)에서 마지막 OggS 페이지를 역순 탐색
             int tailSize = (int)Math.Min(65536, fileLen);
@@ -64,6 +69,9 @@ internal static class MediaDuration
             for (int i = tailSize - 27; i >= 0; i--)
             {
                 if (tail[i] != (byte)'O' || !tail.Slice(i, 4).SequenceEqual(oggS)) continue;
+                // 페이지 헤더 검증: 버전 0, 세그먼트 테이블이 버퍼 안에 있음, 같은 논리 스트림
+                if (tail[i + 4] != 0 || i + 27 + tail[i + 26] > tailSize) continue;
+                if (serial != null && BinaryPrimitives.ReadUInt32LittleEndian(tail.Slice(i + 14)) != serial.Value) continue;
                 long granule = BinaryPrimitives.ReadInt64LittleEndian(tail.Slice(i + 6));
                 if (granule > 0) return granule / (double)rate;
             }

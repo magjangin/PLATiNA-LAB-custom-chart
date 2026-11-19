@@ -244,6 +244,12 @@ internal static class CustomSongs
     /// <summary>지금 플레이 중인 커스텀 패턴 (RequestGameStart에서 설정, 일반 곡이면 null). 메인·입력·오디오 스레드가 함께 읽는다.</summary>
     public static volatile CustomChart Current;
 
+    /// <summary>
+    /// 가장 최근 RequestGameStart의 곡 (일반 곡이면 null). Current와 달리 플레이 종료 정리(PlayDirector.Exit·선곡 복귀)에서
+    /// 지우지 않는다. SendGameEnd가 패턴 번호를 못 읽을 때 "방금 플레이한 곡이 커스텀이었는지"를 정리 순서와 무관하게 판정하는 데 쓴다.
+    /// </summary>
+    public static volatile CustomChart LastStarted;
+
     /// <summary>기반 패턴의 리소스 파일명. 커스텀 패턴도 이 리소스를 로드해야 Parse 후킹까지 도달한다.</summary>
     internal static volatile string s_baseFileName;
     /// <summary>
@@ -515,25 +521,49 @@ internal static class CustomSongs
 
     private static string SongIdMapPath => Path.Combine(MelonEnvironment.UserDataDirectory, "PLATiNALAB", "song_ids.json");
 
+    /// <summary>
+    /// 곡 번호 영속화 파일을 읽는다. 본 파일이 손상됐으면 직전 저장본(.bak)으로 복구하고, 손상 파일은 .corrupt로 옮겨 남긴다.
+    /// 예전에는 읽기 실패 시 빈 맵으로 시작해 곧바로 덮어써서, 저장 도중 종료 한 번으로 모든 곡의 hwa_NNN·PatternIndex가 다시 매겨졌다.
+    /// </summary>
     private static Dictionary<string, int> LoadSongIdMap()
     {
-        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var path = SongIdMapPath;
+        if (TryReadSongIdMap(path, out var map, out var error)) return map;
+        Core.Log.Warning($"[CustomSongs] song_ids.json 읽기 실패: {error}");
+        try { File.Move(path, path + ".corrupt", overwrite: true); }
+        catch (Exception e) { Core.Log.Warning($"[CustomSongs] 손상된 song_ids.json 보관 실패: {e.Message}"); }
+        if (TryReadSongIdMap(path + ".bak", out map, out _) && map.Count > 0)
+        {
+            Core.Log.Warning($"[CustomSongs] song_ids.json.bak에서 곡 번호 {map.Count}개를 복구했습니다 (손상 파일: song_ids.json.corrupt)");
+            SaveSongIdMap(map); // 본 파일을 바로 되살린다 (새 곡이 없으면 Scan이 저장하지 않아 다음 실행에서 또 번호를 매기게 된다)
+            return map;
+        }
+        Core.Log.Warning("[CustomSongs] 복구할 백업이 없어 곡 번호를 새로 매깁니다 (손상 파일: song_ids.json.corrupt)");
+        return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>파일이 없으면 빈 맵으로 성공. 내용이 깨졌으면 false.</summary>
+    private static bool TryReadSongIdMap(string path, out Dictionary<string, int> map, out string error)
+    {
+        map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        error = null;
         try
         {
-            var path = SongIdMapPath;
-            if (!File.Exists(path)) return map;
+            if (!File.Exists(path)) return true;
             var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(path));
             if (parsed != null)
                 foreach (var (k, v) in parsed)
                     if (!string.IsNullOrEmpty(k) && v > 0) map[k] = v;
+            return true;
         }
         catch (Exception e)
         {
-            Core.Log.Warning($"[CustomSongs] song_ids.json 읽기 실패, 새로 생성합니다: {e.Message}");
+            error = e.Message;
+            return false;
         }
-        return map;
     }
 
+    /// <summary>임시 파일에 쓴 뒤 교체한다 (도중 종료로 본 파일이 잘리지 않게). 직전 본은 .bak으로 남는다.</summary>
     private static void SaveSongIdMap(Dictionary<string, int> map)
     {
         try
@@ -541,7 +571,10 @@ internal static class CustomSongs
             var path = SongIdMapPath;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var json = System.Text.Json.JsonSerializer.Serialize(map, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, json);
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, json);
+            if (File.Exists(path)) File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true);
+            else File.Move(tmp, path);
         }
         catch (Exception e)
         {
