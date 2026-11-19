@@ -138,7 +138,7 @@ dotnet build mod\PLATiNALAB.Mod.csproj -c Release
 - `필수 패치 누락` 또는 `[HookGuard] ... 훅을 끕니다`: 해당 기능(또는 커스텀 곡 주입)이 자동으로 꺼지고 게임 원본 동작은 유지됩니다. 일반 곡 플레이는 영향이 없도록 설계했습니다.
 - `[Init] ... 실패`: 해당 초기화 단계만 건너뛴 것입니다.
 
-게임 없이 먼저 확인하려면 `tools/interop-harness`에서 `dotnet run -c Release`를 실행하세요. 자세한 확인 순서는 [`docs/update_resilience_audit.md`](docs/update_resilience_audit.md)에 있습니다.
+게임 없이 먼저 확인하려면 `tools/interop-harness`에서 `dotnet run -c Release`를 실행하세요 (종료 코드 0 = 통과. 훅 대상·JIT 바인딩·필드 레이아웃·리플렉션 폴백 이름·HookGuard 키까지 확인). 자세한 확인 순서는 [`docs/update_resilience_audit.md`](docs/update_resilience_audit.md)에 있습니다.
 
 ## 저장소 구성
 

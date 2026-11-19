@@ -559,17 +559,24 @@ internal static class CustomSongs
     // 아래 세 곳은 실패해도 주입을 계속할 수 있는 선택 경로다. 게임 멤버 접근은 *Direct 메서드로 빼고 여기서 try로 감싼다.
     // 예전에는 try가 같은 메서드 안에 있어서, 멤버가 사라지면 JIT 단계 예외가 그 try를 건너뛰고 Inject 전체(= 커스텀 곡 주입)를 실패시켰다.
 
+    // 세 키 모두 HookGuard.IsDisabled로 단락한다. IsPreferredBaseSong은 패턴 수(수백)만큼 불려서, 단락이 없으면
+    // 업데이트 후 주입 때마다 패턴 수만큼 예외가 반복된다 (하네스 [GuardKey]가 Fail 전용 키를 잡는다).
+    private const string PreferredBaseSongHook = "CustomSongs.IsPreferredBaseSong";
+    private const string DifficultyKeysHook = "CustomSongs.ReadDifficultyKeys";
+    private const string RegisterSongMetaHook = "CustomSongs.RegisterSongMeta";
+
     private static bool IsPreferredBaseSong(PatternInfo p)
     {
+        if (HookGuard.IsDisabled(PreferredBaseSongHook)) return false; // 기반 곡 선호 조건만 포기 (FilePath가 맞는 첫 패턴 사용)
         try { return IsPreferredBaseSongDirect(p); }
         catch (Exception e)
         {
-            HookGuard.Fail("CustomSongs.IsPreferredBaseSong", e); // 기반 곡 선호 조건만 포기 (FilePath가 맞는 첫 패턴 사용)
+            HookGuard.Fail(PreferredBaseSongHook, e);
             return false;
         }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.IsPreferredBaseSong")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(PreferredBaseSongHook)]
     private static bool IsPreferredBaseSongDirect(PatternInfo p)
     {
         var s = p.FindSongInfo();
@@ -582,18 +589,21 @@ internal static class CustomSongs
     private static List<string> ReadValidDifficulties(SongDataManager mgr)
     {
         var valid = new List<string>();
-        try { ReadDifficultyKeysDirect(mgr, valid); }
-        catch (Exception e)
+        if (!HookGuard.IsDisabled(DifficultyKeysHook))
         {
-            HookGuard.Fail("CustomSongs.ReadDifficultyKeys", e);
-            valid.Clear();
-            Core.Log.Warning($"[CustomSongs] _difficultyTypeInfos 읽기 실패, 기본 난이도 목록 사용: {e.Message}");
+            try { ReadDifficultyKeysDirect(mgr, valid); }
+            catch (Exception e)
+            {
+                HookGuard.Fail(DifficultyKeysHook, e);
+                valid.Clear();
+                Core.Log.Warning($"[CustomSongs] _difficultyTypeInfos 읽기 실패, 기본 난이도 목록 사용: {e.Message}");
+            }
         }
         if (valid.Count == 0) valid.AddRange(DefaultDifficulties);
         return valid;
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.ReadDifficultyKeys")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(DifficultyKeysHook)]
     private static void ReadDifficultyKeysDirect(SongDataManager mgr, List<string> into)
     {
         var infos = mgr._difficultyTypeInfos;
@@ -603,15 +613,16 @@ internal static class CustomSongs
 
     private static void RegisterSongMeta(SongDataManager mgr, CustomSong custom, string baseSongId)
     {
+        if (HookGuard.IsDisabled(RegisterSongMetaHook)) return;
         try { RegisterSongMetaDirect(mgr, custom, baseSongId); }
         catch (Exception e)
         {
-            HookGuard.Fail("CustomSongs.RegisterSongMeta", e);
+            HookGuard.Fail(RegisterSongMetaHook, e);
             Core.Log.Warning($"[CustomSongs] _songMetaData 등록 실패 ({custom.Id}): {e.Message}");
         }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining), Guarded("CustomSongs.RegisterSongMeta")]
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded(RegisterSongMetaHook)]
     private static void RegisterSongMetaDirect(SongDataManager mgr, CustomSong custom, string baseSongId)
     {
         var metas = mgr._songMetaData;

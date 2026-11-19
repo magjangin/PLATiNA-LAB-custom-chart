@@ -1,5 +1,5 @@
 // 오프라인 인터롭 하네스 — 게임을 실행하지 않고 MelonLoader가 만든 인터롭 어셈블리로 검증한다.
-//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수, 모드 [Guarded]/[HarmonyPatch]/[Required]/[Layout]/[Body]/[BmsFind] 검증 (종료 코드 0 = 통과)
+//   dotnet run -c Release            : InteropNames 신호별 누락·오탐, 람다 메서드 판별, Locate 엄격 조건 후보 수, 모드 [Guarded]/[HarmonyPatch]/[Required]/[Layout]/[Body]/[Diag]/[NativeField]/[BmsFind]/[Reflect]/[GuardKey] 검증 (종료 코드 0 = 통과)
 //   dotnet run -c Release -- explore : 컴파일러 생성 타입의 멤버(프로퍼티) 이름 빈도 (멤버 모양 신호 조사용)
 // 정답 기준: 인터롭 [ObfuscatedName]의 원래 이름(마지막 중첩 이름)에 '<'가 있거나, 이름에 '<'가 그대로 남은 타입.
 // 게임 경로는 환경 변수 PLATINALAB_GAME, 모드 DLL 경로는 PLATINALAB_MOD로 바꿀 수 있다.
@@ -260,8 +260,10 @@ static class P
         int diagFailed = VerifyDiagnosticTargets(modAsm, interopAsms);
         int nativeFailed = VerifyNativeFields(interopAsms);
         int bmsFailed = VerifyBmsFindFor(modAsm);
+        int reflectFailed = ReflectCheck.Run(modAsm, Interop);
+        int guardKeyFailed = ReflectCheck.RunGuardKeys(modAsm);
         return guardedCount > 0 && patchCount > 0 && guardedFailed == 0 && patchFailed == 0 && requiredFailed == 0
-            && layoutFailed == 0 && bodyFailed == 0 && diagFailed == 0 && nativeFailed == 0 && bmsFailed == 0;
+            && layoutFailed == 0 && bodyFailed == 0 && diagFailed == 0 && nativeFailed == 0 && bmsFailed == 0 && reflectFailed == 0 && guardKeyFailed == 0;
     }
 
     /// <summary>[Diag] DiagnosticPatches.s_targets의 문자열 타깃 5종이 실제 인터롭에 존재하는지 검증.</summary>
