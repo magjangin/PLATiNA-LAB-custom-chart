@@ -189,11 +189,10 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
         UpdateResilience.SafeSetFieldOrProperty(ds, "displayedName", DisplayedName);
         if (donor != null)
         {
-            foreach (var prop in new[] { "carouselBackground", "detailFocusBackground", "categoryColor" })
-            {
-                var v = UpdateResilience.SafeGetFieldOrProperty<object>(donor, prop);
-                if (v != null) UpdateResilience.SafeSetFieldOrProperty(ds, prop, v);
-            }
+            // 이름을 호출부에 문자열 상수로 두어야 하네스 [Reflect]가 정적 타입과 함께 검증한다 (배열 순회는 검증 불가)
+            CopyMember(donor, ds, "carouselBackground");
+            CopyMember(donor, ds, "detailFocusBackground");
+            CopyMember(donor, ds, "categoryColor");
         }
         const System.Reflection.BindingFlags flags =
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
@@ -210,6 +209,13 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
         }
         Core.Log.Msg("[CustomSongs] custom 카테고리 리소스 세트 리플렉션 폴백 생성");
         return ds;
+    }
+
+    /// <summary>기증 세트의 멤버를 이름으로 복사 (하네스 [Reflect]는 이 메서드를 이름 전달 래퍼로 인식해 호출부 문자열을 검증한다).</summary>
+    private static void CopyMember(object donor, object target, string memberName)
+    {
+        var v = UpdateResilience.SafeGetFieldOrProperty<object>(donor, memberName);
+        if (v != null) UpdateResilience.SafeSetFieldOrProperty(target, memberName, v);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("SongCategoryResourceCollection.TextResource")]

@@ -20,7 +20,7 @@
 - **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과)
 - **후킹 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
-- **업데이트 내성 감사 & 감사 이력(1~10차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
+- **업데이트 내성 감사 & 감사 이력(1~11차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -39,11 +39,13 @@
 - **플레이 보조 & 오버레이 (`mod/ModConfig.cs`, `mod/PlayAssist.cs`, `mod/PlayOverlay.cs`):** `SaveCustomKey\config.txt` 핫리로드. 오토 플레이(`Extra.AutoPlay`), 올 퍼펙트(커스텀 곡 전용), uGUI Canvas 판정바·키뷰어.
 - **오프라인 세션 (`mod/OfflineSession.cs`):** 커스텀 곡의 `RequestGameStart`/`RenewGameSession`/`SendGameEnd` 서버 호출 차단 및 로컬 결과(`AccuracyV2Formula`/`MasteryV2Formula`) 생성.
 - **진단 패치 (`mod/DiagnosticPatches.cs`):** 로그 전용 패치는 `DiagnosticLogs=1`일 때만 수동 적용.
-- **코드 작성 필수 규칙 (하네스 `[Guarded]`/`[HarmonyPatch]`/`[Required]`/`[Layout]`/`[Body]`/`[Diag]`/`[NativeField]` 검증):**
+- **코드 작성 필수 규칙 (하네스 `[Guarded]`/`[HarmonyPatch]`/`[Required]`/`[Layout]`/`[Body]`/`[Diag]`/`[NativeField]`/`[Reflect]`/`[GuardKey]` 검증):**
   1. 게임 타입 직접 참조를 `try`로 감쌀 때는 `[MethodImpl(NoInlining), Guarded("...")]` 별도 메서드로 분리 (같은 메서드의 `try`는 JIT 실패를 못 잡음). 게임 멤버를 직접 참조하는 모든 `[NoInlining]` 격리 메서드에도 `[Guarded]` 필수.
   2. 모드 클래스 필드에 게임 `enum`을 그대로 저장하지 말고 `int`로 저장.
   3. 게임 `record` 객체(`SongInfo`, `PatternInfo`, `PlayResult` 등)에 `== null`/`!= null` 대신 `is null`/`is not null` 사용 (인터롭 `op_Equality`는 `il2cpp_runtime_invoke`).
   4. 새 코드를 작성하면 반드시 `dotnet run --project tools/interop-harness -c Release`로 검증 (종료 코드 0).
+  5. 리플렉션 폴백(`UpdateResilience.SafeSetFieldOrProperty`/`SafeGetFieldOrProperty`)의 멤버 이름은 **호출부에 문자열 상수**로 두고, 대상 인자는 **인터롭 타입으로 정적 타입이 잡힌 변수**로 넘긴다 (`object`·배열 순회 금지). 이름을 넘겨받는 헬퍼는 자기 인자를 그대로 전달하면 하네스가 래퍼로 인식한다(`SetSongField`, `CopyMember`). `[Reflect]`가 모드 자신의 `UpdateResilience.CanResolve`로 인터롭에서 찾히는지 확인한다.
+  6. `HookGuard.Fail(키)`로 끄는 키는 반드시 어딘가에서 `HookGuard.IsDisabled(키)`로 단락하고, `IsDisabled` 키는 `[Guarded]` 이름이거나 `Fail` 키여야 한다 (`[GuardKey]`). 키는 `const string`으로 한 곳에 둔다.
 
 ---
 
@@ -69,6 +71,7 @@
 - **음원 교체 지점:** `PreviewSoundController` / `SetMainTrackToPlay` 미발동, `SoundData..ctor` IL2CPP 백엔드 경고 → `SoundData.FromHEAudioClip` 패치.
 - **IMGUI(`OnGUI`):** 게임 빌드에서 스트리핑됨 → uGUI Canvas 오버레이로 교체.
 - **`InGameSettingHelper.IsAutoPlayMode` / `InputStateMachine.Interpret` 패치:** 호출부 인라인 → `ExtraScheme.SetExtra` / `ProcessInputEvent` 사용.
+- **`UpdateResilience` 백킹 폴백을 `Type.GetField`로만 찾기 (1~10차):** Il2CppInterop은 IL2CPP 필드를 관리 필드가 아니라 같은 이름의 **프로퍼티**(`SongInfo._Id_k__BackingField` 등)로 노출해서, 인터롭 타입에서는 폴백 35개 호출부 중 고유 이름 17개가 한 번도 찾히지 않았다(11차 실측). → 후보 이름을 필드 → 프로퍼티 순으로 탐색.
 - **`record`/`record struct` 및 일부 LINQ 람다:** `CS0656(NullableAttribute)` 발생 시 일반 클래스/`foreach`로 대체.
 - **게임 exe 직접 실행:** Steam SDK 초기화 실패 종료 → `steam://run/3430470//-screen-fullscreen 0 -screen-width 1600 -screen-height 900/` 사용.
 - **사용자 PC 사용 중 자동 입력:** `um win drive ... idle` 1분 미만이면 입력 보내지 않음.
@@ -88,7 +91,7 @@
 ---
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
-- 최신 빌드 인게임 실기 확인: `[HookGuard]`(54개 메서드), `[Native]` 자체 검증, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.
+- 최신 빌드 인게임 실기 확인: `[HookGuard]`(54개 메서드), 11차 백킹 프로퍼티 폴백(직접 경로가 정상이면 호출되지 않음 — 회귀 없음만 확인), `[Native]` 자체 검증, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.
 - 키뷰어 위치가 하단 섹션 패널과 겹치는 문제 및 일시정지 화면 위 오버레이 표시 개선.
 - BMS 박자 변경(`#mmm02`)·STOP·PitchNote 인게임 판정 확인.
 - 결과 화면 `SectionDetailPanelController.Initialize` NRE 원인 해소 (`OfflineSession.EnsureSectionRecords` 빈 배열 방어 적용됨, 실기 재확인 필요).

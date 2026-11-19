@@ -13,13 +13,15 @@ internal static class UpdateResilience
         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
 
     // 판정 훅(게임 루프 스레드)과 메인 스레드가 함께 쓴다. 못 찾은 결과(null)도 저장해 매번 다시 탐색하지 않는다.
-    private static readonly ConcurrentDictionary<(Type, string), FieldInfo> s_fieldCache = new();
     private static readonly ConcurrentDictionary<(Type, string), PropertyInfo> s_propertyCache = new();
+    private static readonly ConcurrentDictionary<(Type, string, bool), MemberInfo> s_backingCache = new();
 
     /// <summary>
-    /// 프로퍼티 또는 백킹 필드를 찾아 안전하게 값을 설정한다.
+    /// 프로퍼티 또는 백킹 멤버를 찾아 안전하게 값을 설정한다.
     /// 1. 상속 계층을 포함한 public/non-public 프로퍼티 setter 시도
-    /// 2. 컴파일러 백킹 필드 형식들(_<name>_k__BackingField, <name>k__BackingField, _{name}, m_{name}, {name}) 순차 검색
+    /// 2. 백킹 멤버 이름 후보(_X_k__BackingField, &lt;X&gt;k__BackingField, _x, _X, m_X, X)를 필드 → 프로퍼티 순으로 검색.
+    ///    Il2CppInterop은 IL2CPP 필드를 관리 필드가 아니라 같은 이름의 <b>프로퍼티</b>로 노출하므로(예: SongInfo._Id_k__BackingField),
+    ///    필드만 찾으면 인터롭 타입에서는 백킹 폴백이 한 번도 성공하지 못한다 (11차 감사에서 발견).
     /// </summary>
     public static bool SafeSetFieldOrProperty(object target, string memberName, object value)
     {
@@ -27,32 +29,14 @@ internal static class UpdateResilience
         var type = target.GetType();
 
         var prop = FindProperty(type, memberName);
-        if (prop != null && prop.CanWrite)
-        {
-            try
-            {
-                prop.SetValue(target, ConvertValue(value, prop.PropertyType));
-                return true;
-            }
-            catch { }
-        }
+        if (prop != null && prop.CanWrite && TrySet(prop, target, value)) return true;
 
-        var field = FindField(type, memberName);
-        if (field != null)
-        {
-            try
-            {
-                field.SetValue(target, ConvertValue(value, field.FieldType));
-                return true;
-            }
-            catch { }
-        }
-
-        return false;
+        var backing = FindBacking(type, memberName, write: true);
+        return backing != null && TrySet(backing, target, value);
     }
 
     /// <summary>
-    /// 프로퍼티 또는 필드에서 값을 안전하게 읽어온다.
+    /// 프로퍼티 또는 백킹 멤버에서 값을 안전하게 읽어온다.
     /// </summary>
     public static T SafeGetFieldOrProperty<T>(object target, string memberName, T defaultValue = default)
     {
@@ -60,26 +44,54 @@ internal static class UpdateResilience
         var type = target.GetType();
 
         var prop = FindProperty(type, memberName);
-        if (prop != null && prop.CanRead)
-        {
-            try
-            {
-                if (TryCast<T>(prop.GetValue(target), out var tVal)) return tVal;
-            }
-            catch { }
-        }
+        if (prop != null && prop.CanRead && TryGet(prop, target, out T value)) return value;
 
-        var field = FindField(type, memberName);
-        if (field != null)
-        {
-            try
-            {
-                if (TryCast<T>(field.GetValue(target), out var tVal)) return tVal;
-            }
-            catch { }
-        }
+        var backing = FindBacking(type, memberName, write: false);
+        return backing != null && TryGet(backing, target, out value) ? value : defaultValue;
+    }
 
-        return defaultValue;
+    /// <summary>
+    /// 인스턴스 없이 타입만으로 폴백이 이 이름을 찾을 수 있는지 (SafeSet/SafeGet과 같은 탐색).
+    /// tools/interop-harness의 [Reflect] 검증이 호출부의 정적 타입·문자열 이름으로 이 메서드를 불러, 이름 오타나
+    /// 업데이트로 사라진 멤버를 게임 실행 없이 잡는다 (폴백은 직접 경로가 깨졌을 때만 돌기 때문에 실기에서는 늦게 드러난다).
+    /// </summary>
+    internal static bool CanResolve(Type type, string memberName, bool write)
+    {
+        if (type == null || string.IsNullOrEmpty(memberName)) return false;
+        var prop = FindProperty(type, memberName);
+        if (prop != null && (write ? prop.CanWrite : prop.CanRead)) return true;
+        return FindBacking(type, memberName, write) != null;
+    }
+
+    private static bool TrySet(MemberInfo member, object target, object value)
+    {
+        try
+        {
+            switch (member)
+            {
+                case PropertyInfo p: p.SetValue(target, ConvertValue(value, p.PropertyType)); return true;
+                case FieldInfo f: f.SetValue(target, ConvertValue(value, f.FieldType)); return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static bool TryGet<T>(MemberInfo member, object target, out T value)
+    {
+        try
+        {
+            object raw = member switch
+            {
+                PropertyInfo p => p.GetValue(target),
+                FieldInfo f => f.GetValue(target),
+                _ => null,
+            };
+            return TryCast(raw, out value);
+        }
+        catch { }
+        value = default;
+        return false;
     }
 
     private static object ConvertValue(object value, Type targetType)
@@ -140,11 +152,14 @@ internal static class UpdateResilience
         return null;
     }
 
-    /// <summary>인터롭 백킹 필드(_X_k__BackingField), 원래 백킹 필드(&lt;X&gt;k__BackingField), 흔한 명명 규칙 순으로 상속 계층까지 찾는다.</summary>
-    private static FieldInfo FindField(Type type, string memberName) =>
-        s_fieldCache.GetOrAdd((type, memberName), FindFieldUncached);
+    /// <summary>
+    /// 백킹 멤버 이름 후보를 상속 계층까지 필드 → 프로퍼티 순으로 찾는다. 프로퍼티는 쓰기/읽기 가능한 것만 돌려준다.
+    /// 인터롭 타입은 IL2CPP 필드를 프로퍼티로, 순수 관리 타입은 필드로 노출하므로 둘 다 본다.
+    /// </summary>
+    private static MemberInfo FindBacking(Type type, string memberName, bool write) =>
+        s_backingCache.GetOrAdd((type, memberName, write), FindBackingUncached);
 
-    private static FieldInfo FindFieldUncached((Type Type, string Name) key)
+    private static MemberInfo FindBackingUncached((Type Type, string Name, bool Write) key)
     {
         var name = key.Name;
         var candidates = new[]
@@ -161,7 +176,11 @@ internal static class UpdateResilience
             foreach (var candidate in candidates)
             {
                 var field = cur.GetField(candidate, DeclaredInstanceFlags);
-                if (field != null) return field;
+                if (field != null && !(key.Write && field.IsInitOnly)) return field;
+                PropertyInfo prop;
+                try { prop = cur.GetProperty(candidate, DeclaredInstanceFlags); }
+                catch (AmbiguousMatchException) { continue; }
+                if (prop != null && (key.Write ? prop.CanWrite : prop.CanRead)) return prop;
             }
         }
         return null;

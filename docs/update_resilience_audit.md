@@ -389,11 +389,41 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 | U10-4 | `DiagnosticPatches.cs`, `tools/interop-harness` | `DiagnosticPatches`가 문자열(`TypeByName`)로 전환되면서 오프라인 하네스 검증 대상에서 빠졌고, `NativeField` 백킹 필드 2종도 오프라인 검증이 없었음 | `DiagnosticPatches.s_targets` 테이블화(리팩토링) + 하네스에 `[Diag]`(5종)·`[NativeField]`(2종) 검증 추가 |
 | R10-1 | `CustomMedia.GetCover`, `CustomSongs.MakeFirstNoteChart` | `GetCover`의 LRU 퇴거 루프가 1차/2차 lock에 중복, `MakeFirstNoteChart`가 `notes` 누락/비정상 JSON에서 NRE 가능 | `EvictCoversIfFull()` 추출, `MakeFirstNoteChart` null/타입 방어 보강 |
 
+## 11차 (2026-11-19): 리플렉션 폴백 부활, 하네스 `[Reflect]`·`[GuardKey]` 추가
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 54개·`[HarmonyPatch]` 26개·`[Required]` 10개·`[Layout]` 277개·`[Body]` 388개 메서드·`[Diag]` 5개·`[NativeField]` 2개·`[BmsFind]` 8건·`[TextSanitizer]` 10건·`[PureLogic]` 실패 0건, 신규 `[Reflect]` 호출부 35개(이름 전달 래퍼 3개)·신규 `[GuardKey]` `IsDisabled` 호출 42개·`Fail` 키 39종·`[Guarded]` 키 49종 실패 0. **인게임 실기 실행은 이 빌드로 미확인.**
+
+### 발견: 리플렉션 폴백 층이 인터롭 타입에서 한 번도 동작하지 않았다
+
+`UpdateResilience.SafeSetFieldOrProperty`/`SafeGetFieldOrProperty`는 "프로퍼티 → 백킹 필드(`_X_k__BackingField` 등)" 순으로 찾았는데, 백킹 단계가 `Type.GetField`만 썼다. Il2CppInterop은 IL2CPP 필드를 관리 필드가 아니라 **같은 이름의 프로퍼티**로 노출한다(관리 필드는 `NativeFieldInfoPtr_*` 정적 포인터뿐). 그래서 getter만 있는 `SongInfo.Id`나 소문자 필드(`HEAudioClip._bytes`) 같은 경우 폴백이 항상 `false`였다.
+
+새 `[Reflect]` 검사를 수정 전 로직으로 돌린 실측: 35개 호출부 중 고유 이름 17개(읽기/쓰기 20건) 실패 — `HEAudioClip.bytes/audioFormat`, `SongCategoryResourceDataSet.categoryKey/displayedName/carouselBackground/detailFocusBackground/categoryColor`, `CategoryResource.resourceRenderType`, `SongInfo.Id/SonglistCategorizationTags/LockTypeString`, `PatternInfo.GroupId/PatternIndex/Level/PreciseLevel/Patterner/Difficulty`. 직접 경로(`*Direct`)가 정상인 현재 빌드에서는 드러나지 않았지만, 업데이트로 직접 경로가 깨지는 순간 "폴백이 받쳐 준다"는 1~10차의 전제가 거짓이었다.
+
+### 업데이트 내성 · 정확성
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| U11-1 | `UpdateResilience` | 백킹 폴백이 필드만 탐색 → 인터롭 타입에서 무효 (위 실측) | 후보 이름을 상속 계층까지 **필드 → 프로퍼티** 순으로 탐색(`FindBacking`, 쓰기/읽기 가능 여부 포함 캐시), 공통 `TrySet`/`TryGet` 추출, 인스턴스 없이 같은 탐색을 하는 `CanResolve(Type, name, write)` 추가 |
+| U11-2 | `SongCategoryResourceCollection_GetDataSet_Patch.CreateFallback` | 기증 세트 복사가 문자열 배열 순회라 이름을 오프라인 검증할 수 없음 | `CopyMember(donor, target, name)` 래퍼로 호출부마다 상수 전달 |
+| U11-3 | `CustomSongs` (`IsPreferredBaseSong`·`ReadValidDifficulties`·`RegisterSongMeta`) | `HookGuard.Fail`로 끄기만 하고 `IsDisabled`로 단락하지 않음. `IsPreferredBaseSong`은 패턴 수(수백)만큼 불려 업데이트 후 주입 때마다 그만큼 예외 반복 | 키를 `const`로 모으고 세 곳 모두 진입부 `IsDisabled` 단락 |
+| U11-4 | `InGameSurface_SendGameEnd_Patch.Prefix` | `IsCustom` 바인딩 실패로 꺼진 뒤에도 모든 곡 결과 전송마다 `IsCustom` 재시도·예외 | 꺼진 뒤에는 `CustomSongs.Current != null`(기존 catch 폴백과 같은 판정)만 사용 |
+
+### 하네스 신규 검사 (`tools/interop-harness/ReflectCheck.cs`)
+
+- **`[Reflect]`**: 모드 IL을 스택 시뮬레이션(선형 스캔 + 분기 대상 스냅숏)해 `SafeSet`/`SafeGet` 호출부마다 (대상 인자의 정적 타입, 이름 상수)를 뽑고, 모드 자신의 `UpdateResilience.CanResolve`를 리플렉션으로 불러 인터롭 타입에서 찾히는지 확인한다. 자기 인자를 그대로 넘기는 메서드는 "이름 전달 래퍼"로 인식(고정점 반복)해 그 호출부를 검사한다. 이름이 상수가 아니거나 대상 정적 타입이 인터롭 타입이 아니면 실패. 자기 검증: `SongInfo.Id` 쓰기 = true, 없는 이름 = false가 아니면 실패(`CanResolve` 퇴행 방지).
+- **`[GuardKey]`**: 10차의 수작업 키 대조를 기계화. ① `IsDisabled(키)`의 키가 `[Guarded]` 이름도 `Fail` 키도 아니면 실패(단락이 절대 켜지지 않음), ② `Fail(키)`로 끄는 키를 `IsDisabled`로 단락하는 곳이 없으면 실패(9·10차 U9-3·U10-2·U10-3 유형 — 이번에 U11-3·U11-4 4건 발견), ③ 키가 문자열 상수가 아니면 실패(키를 인자로 받는 공통 헬퍼 제외).
+- 한계: 스택 시뮬레이션은 C# 컴파일러 출력(전방 분기·삼항·`??`)에 맞춘 근사다. `calli`나 역방향 분기 안에서 인자를 만드는 경우는 정적 타입을 놓칠 수 있고, 그때는 "정적 타입 불명" 실패로 드러난다(통과로 숨지 않는다).
+
+### 확인 항목 (인게임)
+
+- `[HookGuard] 훅 바인딩 사전 점검 정상 (54개 메서드, …)` — 이번 수정은 직접 경로가 정상이면 폴백을 타지 않으므로 기존 동작과 같아야 한다.
+- 커스텀 곡 주입·선곡·플레이·결과 화면 회귀 없음.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
 3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `Failed to HarmonyInit PatchAll`도 검색한다.
-   - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요, 종료 코드 0이면 통과): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT·`[HarmonyPatch]` 타깃·`[Required]` 실패 0, `[Layout]`·`[Body]` 실패 0을 확인한다. 업데이트로 게임 enum이 struct가 되거나 record가 아니게 되는 등 "재빌드 없이 돌던 모드가 클래스째 깨지는" 변화는 `[Layout]`·`[Body]`가 새 인터롭 기준으로 다시 잡는다.
+   - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요, 종료 코드 0이면 통과): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT·`[HarmonyPatch]` 타깃·`[Required]` 실패 0, `[Layout]`·`[Body]`·`[Diag]`·`[NativeField]` 실패 0, `[Reflect]`(리플렉션 폴백 이름이 새 인터롭에서도 찾히는지)·`[GuardKey]` 실패 0을 확인한다. `[Reflect]` 실패는 "직접 경로가 깨졌을 때 받쳐 줄 폴백도 깨졌다"는 뜻이므로 직접 경로가 아직 정상이어도 이름을 고친다. 업데이트로 게임 enum이 struct가 되거나 record가 아니게 되는 등 "재빌드 없이 돌던 모드가 클래스째 깨지는" 변화는 `[Layout]`·`[Body]`가 새 인터롭 기준으로 다시 잡는다.
 4. 검증 기준 빌드를 `ModHealth.TestedBuildId`와 `TestedGameAssemblySize`(= `GameAssembly.dll` 바이트 수)에 갱신한다. 필수 패치 목록(`s_requiredPatches`)을 바꿨다면 하네스 `[Required]`가 통과하는지도 본다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

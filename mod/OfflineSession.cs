@@ -105,13 +105,18 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// </summary>
     private static bool Prefix(GameEndResult request, PatternInfo patternInfo, ref UniTask<SurfaceResult<FreeModePlayRecordV2>> __result)
     {
+        // 패턴 번호를 못 읽으면 커스텀인지 모른다 → 지금 커스텀 곡을 플레이 중이었다면 서버로 보내지 않는다.
+        // 한 번 꺼진 뒤에는 IsCustom을 다시 시도하지 않아 일반 곡 결과 전송마다 예외가 반복되지 않는다.
         bool custom;
-        try { custom = CustomSongs.IsCustom(patternInfo); }
-        catch (Exception e)
+        if (HookGuard.IsDisabled(Hook)) custom = CustomSongs.Current != null;
+        else
         {
-            // 패턴 번호를 못 읽으면 커스텀인지 모른다 → 지금 커스텀 곡을 플레이 중이었다면 서버로 보내지 않는다
-            HookGuard.Fail(Hook, e, required: true);
-            custom = CustomSongs.Current != null;
+            try { custom = CustomSongs.IsCustom(patternInfo); }
+            catch (Exception e)
+            {
+                HookGuard.Fail(Hook, e, required: true);
+                custom = CustomSongs.Current != null;
+            }
         }
         if (!custom) return true;
 
