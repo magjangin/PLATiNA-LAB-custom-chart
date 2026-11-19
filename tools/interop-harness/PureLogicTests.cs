@@ -151,6 +151,21 @@ internal static class PureLogicTests
             failed++;
         }
 
+        // 1-b) 마지막 진짜 페이지 뒤에 일련번호가 다른 가짜 "OggS"(오디오 데이터 속 우연한 바이트 등)가 있어도 무시해야 한다
+        var oggFakePath = Path.Combine(tmp, "test_fake_tail.ogg");
+        var oggFake = new byte[160];
+        ogg.CopyTo(oggFake, 0);
+        Encoding.ASCII.GetBytes("OggS").CopyTo(oggFake, 128);
+        BinaryPrimitives.WriteInt64LittleEndian(oggFake.AsSpan(134, 8), 999_999_999);
+        BinaryPrimitives.WriteUInt32LittleEndian(oggFake.AsSpan(142, 4), 0x1234);
+        File.WriteAllBytes(oggFakePath, oggFake);
+        var fakeSec = MediaDuration.Ogg(oggFakePath);
+        if (fakeSec == null || Math.Abs(fakeSec.Value - 2.0) > 0.001)
+        {
+            Console.WriteLine($"   [FAIL MediaDuration.Ogg] 가짜 OggS 꼬리: {fakeSec} (기대 2.0)");
+            failed++;
+        }
+
         // 2) 최소 MP4: moov(48B) > mvhd(40B, 내용 32B: version 0, timescale=1000, duration=5000 -> 5.0s)
         var mp4Path = Path.Combine(tmp, "test.mp4");
         var mp4 = new byte[48];

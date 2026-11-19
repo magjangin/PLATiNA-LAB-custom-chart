@@ -178,6 +178,47 @@ static class ReflectCheck
         return checks.Count == 0 ? 1 : failed;
     }
 
+    /// <summary>
+    /// [Mark] ModHealth.Mark(키)와 ReportPlay의 s_fired.Contains(키)가 서로 맞는지.
+    /// ReportPlay가 확인하는 키를 아무도 Mark하지 않으면 매 플레이 "훅 미호출" 거짓 경고가, Mark만 하고 확인하지 않으면 죽은 표시가 된다.
+    /// </summary>
+    public static int RunMarkKeys(Assembly modAsm)
+    {
+        var health = modAsm.GetType("PLATiNALAB.Mod.ModHealth");
+        var report = health?.GetMethod("ReportPlay", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (report == null) { Console.WriteLine("   [FAIL Mark] ModHealth.ReportPlay 없음"); return 1; }
+        var marked = new HashSet<string>();
+        var checkedKeys = new HashSet<string>();
+        int failed = 0;
+        foreach (var t in PLATiNALAB.Mod.InteropNames.SafeGetTypes(modAsm))
+        foreach (var m in t.GetMethods(All).Cast<MethodBase>().Concat(t.GetConstructors(All)))
+        {
+            if (m.IsAbstract || m.GetMethodBody() == null) continue;
+            foreach (var (callee, args) in CallSites(m))
+            {
+                if (callee.DeclaringType == health && callee.Name == "Mark" && args.Length == 1)
+                {
+                    if (args[0].Literal != null) marked.Add(args[0].Literal);
+                    else { failed++; Console.WriteLine($"   [FAIL Mark] {t.Name}.{m.Name}: Mark 키가 문자열 상수가 아님"); }
+                }
+                else if (m == report && callee.Name == "Contains" && args.Length == 2 && args[1].Literal != null)
+                    checkedKeys.Add(args[1].Literal);
+            }
+        }
+        foreach (var k in checkedKeys.Where(k => !marked.Contains(k)))
+        {
+            failed++;
+            Console.WriteLine($"   [FAIL Mark] ReportPlay가 확인하는 '{k}'를 Mark하는 곳이 없음 (매 플레이 거짓 경고)");
+        }
+        foreach (var k in marked.Where(k => !checkedKeys.Contains(k)))
+        {
+            failed++;
+            Console.WriteLine($"   [FAIL Mark] Mark(\"{k}\")를 ReportPlay가 확인하지 않음 (죽은 표시)");
+        }
+        Console.WriteLine($"[Mark] 핵심 훅 호출 표시 키 대조: Mark {marked.Count}종·ReportPlay {checkedKeys.Count}종 중 실패 {failed}개");
+        return checkedKeys.Count == 0 ? 1 : failed;
+    }
+
     static MethodBase Normalize(MethodBase m) => m is MethodInfo mi && mi.IsGenericMethod ? mi.GetGenericMethodDefinition() : m;
 
     static bool IsInterop(Type t, string interopDir)

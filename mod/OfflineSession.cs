@@ -34,6 +34,7 @@ internal static class InGameSurface_RequestGameStart_Patch
     {
         var chart = CustomSongs.ByPatternIndex(patternId);
         CustomSongs.Current = chart;
+        CustomSongs.LastStarted = chart; // 로컬 세션을 못 만들어도 커스텀 곡 결과는 서버로 보내지 않도록 기록
         PatternPlayer_DetermineRunning_HoldEnd_Patch.ResetCache(); // 같은 PatternPlayer를 다시 써도(재도전 등) 새 곡 기준으로 다시 정한다
         if (chart == null) return true;
         if (!ModHealth.CustomSongsAllowed || HookGuard.IsDisabled(Hook))
@@ -105,17 +106,18 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// </summary>
     private static bool Prefix(GameEndResult request, PatternInfo patternInfo, ref UniTask<SurfaceResult<FreeModePlayRecordV2>> __result)
     {
-        // 패턴 번호를 못 읽으면 커스텀인지 모른다 → 지금 커스텀 곡을 플레이 중이었다면 서버로 보내지 않는다.
+        // 패턴 번호를 못 읽으면 커스텀인지 모른다 → 방금 시작한 곡이 커스텀이었다면 서버로 보내지 않는다.
+        // Current는 PlayDirector.Exit 등 정리에서 먼저 지워질 수 있어(호출 순서 미실측) 지우지 않는 LastStarted로 판정한다.
         // 한 번 꺼진 뒤에는 IsCustom을 다시 시도하지 않아 일반 곡 결과 전송마다 예외가 반복되지 않는다.
         bool custom;
-        if (HookGuard.IsDisabled(Hook)) custom = CustomSongs.Current != null;
+        if (HookGuard.IsDisabled(Hook)) custom = CustomSongs.LastStarted != null;
         else
         {
             try { custom = CustomSongs.IsCustom(patternInfo); }
             catch (Exception e)
             {
                 HookGuard.Fail(Hook, e, required: true);
-                custom = CustomSongs.Current != null;
+                custom = CustomSongs.LastStarted != null;
             }
         }
         if (!custom) return true;

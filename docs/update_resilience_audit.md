@@ -419,11 +419,34 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - `[HookGuard] 훅 바인딩 사전 점검 정상 (54개 메서드, …)` — 이번 수정은 직접 경로가 정상이면 폴백을 타지 않으므로 기존 동작과 같아야 한다.
 - 커스텀 곡 주입·선곡·플레이·결과 화면 회귀 없음.
 
+## 12차 (2026-11-20): 미디어 길이 오판, 데이터 파일 손상 내성, 하네스 `[Mark]`·`[Fingerprint]` 추가
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 — `[Guarded]` 54개·`[HarmonyPatch]` 26개·`[Required]` 10개·`[Layout]` 281개·`[Body]` 390개 메서드·`[Diag]` 5개·`[NativeField]` 2개·`[BmsFind]` 8건·`[TextSanitizer]` 10건·`[PureLogic]` 실패 0건(Ogg 가짜 페이지 회귀 추가)·`[Reflect]` 35개·`[GuardKey]` 실패 0, 신규 `[Mark]` 4종·신규 `[Fingerprint]` 3항목 실패 0. **인게임 실기 실행은 이 빌드로 미확인.**
+
+### 정확성 · 데이터 내성
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C12-1 | `MediaDuration.ReadOgg` | 파일 끝 64KB를 역탐색해 처음 만난 `"OggS"`의 granule을 길이로 썼다. 오디오 데이터 속 우연한 `OggS` 바이트나 다른 논리 스트림 페이지를 페이지로 오인할 수 있음. **실측**(수정 전 코드로 새 회귀 테스트): 2초짜리 파일을 22,675초로 읽음 → 커스텀 곡 차트 끝이 그만큼 연장될 수 있었다 | 페이지 헤더 검증(버전 0, 세그먼트 테이블이 버퍼 안) + 첫 페이지의 비트스트림 일련번호 일치만 인정. `PureLogicTests`에 가짜 꼬리 페이지 회귀 추가 |
+| C12-2 | `CustomCharts.Process` / `ReadAll` | 차트 스트림 읽기 실패 시 빈 배열로 이어가, 오버라이드 JSON이 없는 **일반 곡**도 빈 차트 스트림으로 바뀜 | `ReadAll`은 실패 시 `null`, 원본을 처음으로 되감을 수 있으면(`CanSeek`) 원본 그대로 반환 |
+| C12-3 | `CustomSongs.LoadSongIdMap` / `SaveSongIdMap` | `File.WriteAllText` 직접 덮어쓰기라 저장 도중 종료 시 파일이 잘리고, 다음 실행에서 읽기 실패 → 빈 맵 → 곧바로 덮어써 **모든 커스텀 곡의 `hwa_NNN`·`PatternIndex`가 다시 매겨짐**(손상 파일도 사라짐) | 임시 파일에 쓰고 `File.Replace`로 교체(직전본 `.bak`). 읽기 실패 시 손상 파일을 `.corrupt`로 보관하고 `.bak`에서 복구 후 즉시 재저장 |
+| C12-4 | `InGameSurface_SendGameEnd_Patch.Prefix` | 패턴 번호를 못 읽을 때의 폴백이 `CustomSongs.Current`를 썼는데, `Current`는 `PlayDirector.Exit`·선곡 복귀에서 지워진다. `SendGameEnd`와 `Exit`의 순서는 **미실측**이라 커스텀 곡 결과를 일반 곡으로 오판해 서버로 보낼 여지 | 정리에서 지우지 않는 `CustomSongs.LastStarted`(가장 최근 `RequestGameStart`의 곡, 일반 곡이면 null)로 판정 |
+
+### 하네스 신규 검사
+
+- **`[Mark]`** (`ReflectCheck.RunMarkKeys`): `ModHealth.Mark(키)` 상수와 `ReportPlay`의 `s_fired.Contains(키)` 상수를 대조. 확인하는 키를 아무도 Mark하지 않으면 매 플레이 "훅 미호출" 거짓 경고, Mark만 하면 죽은 표시 → 둘 다 실패.
+- **`[Fingerprint]`** (`Program.VerifyFingerprint`): `ModHealth.TestedBuildId`·`TestedGameAssemblySize`·`TestedLocateCount` 상수를 설치된 게임의 매니페스트 `buildid`·`GameAssembly.dll` 크기·Locate 엄격 조건 건수와 대조. 업데이트 후 확인 순서 4단계(검증 기준 갱신)를 기계화했다 — 게임이 바뀌었으면 **의도적으로 실패**하며 갱신할 값을 출력한다.
+
+### 확인 항목 (인게임)
+
+- 커스텀 곡 스캔 후 `UserData\PLATiNALAB\song_ids.json`과 `song_ids.json.bak`(두 번째 저장부터)이 생기고 곡 번호가 유지되는지.
+- 커스텀 곡 결과 화면: `SendGameEnd 서버 전송 생략` 로그(정상 경로는 `IsCustom`이라 동작 변화 없음).
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
 3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `Failed to HarmonyInit PatchAll`도 검색한다.
    - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요, 종료 코드 0이면 통과): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT·`[HarmonyPatch]` 타깃·`[Required]` 실패 0, `[Layout]`·`[Body]`·`[Diag]`·`[NativeField]` 실패 0, `[Reflect]`(리플렉션 폴백 이름이 새 인터롭에서도 찾히는지)·`[GuardKey]` 실패 0을 확인한다. `[Reflect]` 실패는 "직접 경로가 깨졌을 때 받쳐 줄 폴백도 깨졌다"는 뜻이므로 직접 경로가 아직 정상이어도 이름을 고친다. 업데이트로 게임 enum이 struct가 되거나 record가 아니게 되는 등 "재빌드 없이 돌던 모드가 클래스째 깨지는" 변화는 `[Layout]`·`[Body]`가 새 인터롭 기준으로 다시 잡는다.
-4. 검증 기준 빌드를 `ModHealth.TestedBuildId`와 `TestedGameAssemblySize`(= `GameAssembly.dll` 바이트 수)에 갱신한다. 필수 패치 목록(`s_requiredPatches`)을 바꿨다면 하네스 `[Required]`가 통과하는지도 본다.
+4. 검증 기준 빌드를 `ModHealth.TestedBuildId`와 `TestedGameAssemblySize`(= `GameAssembly.dll` 바이트 수)에 갱신한다 (Locate 건수가 바뀌었으면 `TestedLocateCount`도). 하네스 `[Fingerprint]`가 갱신할 값을 출력하고, 갱신 전에는 실패한다. 필수 패치 목록(`s_requiredPatches`)을 바꿨다면 하네스 `[Required]`가 통과하는지도 본다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

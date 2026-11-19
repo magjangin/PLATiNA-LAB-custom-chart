@@ -165,6 +165,7 @@ internal static class CustomCharts
         return sb.ToString();
     }
 
+    /// <summary>스트림 전체를 관리 배열로 읽는다. 실패하면 null (호출부가 원본 되감기로 처리).</summary>
     private static byte[] ReadAll(Il2CppSystem.IO.Stream stream)
     {
         Il2CppSystem.IO.MemoryStream ms = null;
@@ -178,12 +179,23 @@ internal static class CustomCharts
         catch (Exception e)
         {
             Core.Log.Warning($"[CustomCharts] 스트림 읽기 예외: {e.Message}");
-            return Array.Empty<byte>();
+            return null;
         }
         finally
         {
             try { ms?.Dispose(); } catch { }
         }
+    }
+
+    private static bool TryRewind(Il2CppSystem.IO.Stream stream)
+    {
+        try
+        {
+            if (!stream.CanSeek) return false;
+            stream.Position = 0;
+            return true;
+        }
+        catch { return false; }
     }
 
     private static Il2CppSystem.IO.Stream ToStream(byte[] bytes)
@@ -211,6 +223,13 @@ internal static class CustomCharts
             return original;
 
         byte[] bytes = ReadAll(original);
+        if (bytes == null)
+        {
+            // 예전에는 빈 배열로 이어가서, 오버라이드가 없는 일반 곡도 빈 차트 스트림으로 바뀌었다.
+            // 원본을 처음으로 되감을 수 있으면 원본 그대로 돌려준다 (커스텀 곡은 기반 차트 없이 변환할 수 없다).
+            if (TryRewind(original)) return original;
+            bytes = Array.Empty<byte>();
+        }
 
         var name = key ?? $"unknown_{bytes.Length}";
         var customPath = Path.Combine(CustomDir, name + ".json");
