@@ -72,12 +72,12 @@ internal static class PlayOverlay
     // 매 프레임 바뀌지 않는 부분(판정바 틀·범위·중앙선, 키 칸 위치·글자)은 화면 크기나 설정이 바뀔 때만 다시 설정한다.
     // UI 속성 설정은 하나하나가 IL2CPP 호출이고 문자열 설정은 IL2CPP 문자열 할당까지 일으킨다.
     // (record struct는 Nullable 특성을 요구해 CS0656 → 값 튜플 + 유효 플래그)
-    private static (float screenW, float screenH, bool vertical, int trackShape, int rangeShape, string side, float r0, float r1, float r2, float r3) s_barLayout;
+    private static (float screenW, float screenH, bool vertical, int trackShape, int rangeShape, string side, float scale, float r0, float r1, float r2, float r3) s_barLayout;
     private static bool s_barLayoutValid;
     private static int s_hitVersion, s_labelVersion = -1;
     private static int s_historyVersion, s_ticksPlacedVersion = -1; // 기록이 늘거나 만료될 때만 틱 위치를 다시 잡는다
     private static float s_screenW, s_screenH; // 프레임마다 한 번만 읽는다 (Screen.width/height는 IL2CPP 호출)
-    private static (float screenW, float screenH, string[] labels, int pitchIndex) s_keyLayout; // labels는 참조 비교 (BindKeys마다 새 배열)
+    private static (float screenW, float screenH, string[] labels, int pitchIndex, float scale) s_keyLayout; // labels는 참조 비교 (BindKeys마다 새 배열)
     private static bool s_keyLayoutValid;
     private static int[] s_keyDrawn = Array.Empty<int>(); // 칸별로 마지막에 그린 상태 (-1 = 미정, 0 = 뗌, 1 = 누름)
     private const int MaxPending = 256;
@@ -356,10 +356,11 @@ internal static class PlayOverlay
         int rangeShape = ModConfig.JudgmentBarRangeShape == -1 ? trackShape : ModConfig.JudgmentBarRangeShape;
         bool left = ModConfig.JudgmentBarSide.Equals("Left", StringComparison.OrdinalIgnoreCase);
         bool right = ModConfig.JudgmentBarSide.Equals("Right", StringComparison.OrdinalIgnoreCase);
-        float barW = vertical ? 24f : 300f;
-        float barH = vertical ? 300f : 24f;
+        float k = ModConfig.OverlayScale; // 4K·HiDPI에서 픽셀 고정 크기가 작아 보이는 문제 대응 (config.txt OverlayScale)
+        float barW = (vertical ? 24f : 300f) * k;
+        float barH = (vertical ? 300f : 24f) * k;
 
-        const float edge = 60f;
+        float edge = 60f * k;
         float cx = left ? (vertical ? edge : edge + barW / 2f)
             : right ? (vertical ? screenW - edge : screenW - edge - barW / 2f)
             : (vertical ? edge : screenW / 2f);
@@ -368,13 +369,15 @@ internal static class PlayOverlay
         float maxMs = RangeMs[^1];
         float scale = (vertical ? barH / 2f : barW / 2f) / maxMs;
 
-        var layout = (screenW, screenH, vertical, trackShape, rangeShape, ModConfig.JudgmentBarSide,
+        var layout = (screenW, screenH, vertical, trackShape, rangeShape, ModConfig.JudgmentBarSide, k,
             RangeMs[0], RangeMs[1], RangeMs[2], RangeMs[3]);
         bool layoutChanged = !s_barLayoutValid || s_barLayout != layout;
         if (layoutChanged)
         {
             s_barLayout = layout;
             s_barLayoutValid = true;
+            s_label.fontSize = 16f * k;
+            s_labelShadow.fontSize = 16f * k;
             SetRect(s_track, new Rect(cx - barW / 2f, cy - barH / 2f, barW, barH), new Color(0.08f, 0.08f, 0.08f, 0.65f), trackShape);
             SetRange(s_ranges[0], cx, cy, barW, barH, vertical, RangeMs[2] * 2f * scale, new Color(0.65f, 0.55f, 0.12f, 0.18f), rangeShape); // GREAT
             SetRange(s_ranges[1], cx, cy, barW, barH, vertical, RangeMs[1] * 2f * scale, new Color(0.30f, 0.60f, 0.90f, 0.22f), rangeShape); // PERFECT
@@ -424,10 +427,10 @@ internal static class PlayOverlay
                 s_labelVersion = s_hitVersion;
                 string text = $"{(last.OffsetMs >= 0 ? "+" : "")}{last.OffsetMs:F1} ms · {JudgeName(last.Judgment)} ({(last.OffsetMs >= 0 ? "FAST" : "SLOW")})";
                 bool labelLeft = vertical && right;
-                const float labelW = 320f;
+                float labelW = 320f * k, labelH = 24f * k;
                 var rect = vertical
-                    ? (labelLeft ? new Rect(cx - barW / 2f - 10f - labelW, cy - 12f, labelW, 24f) : new Rect(cx + barW / 2f + 10f, cy - 12f, labelW, 24f))
-                    : new Rect(cx - 90f, cy - barH / 2f - 28f, labelW, 24f);
+                    ? (labelLeft ? new Rect(cx - barW / 2f - 10f * k - labelW, cy - labelH / 2f, labelW, labelH) : new Rect(cx + barW / 2f + 10f * k, cy - labelH / 2f, labelW, labelH))
+                    : new Rect(cx - 90f * k, cy - barH / 2f - 28f * k, labelW, labelH);
                 var align = labelLeft ? TextAlignmentOptions.MidlineRight : TextAlignmentOptions.MidlineLeft;
                 SetText(s_labelShadow, new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), text, align);
                 SetText(s_label, rect, text, align);
@@ -578,11 +581,12 @@ internal static class PlayOverlay
             s_keyLayoutValid = false;
         }
 
-        const float boxW = 44f, boxH = 44f, gap = 6f, bottom = 56f;
+        float ks = ModConfig.OverlayScale;
+        float boxW = 44f * ks, boxH = 44f * ks, gap = 6f * ks, bottom = 56f * ks;
         float pitchW = boxW * 2f + gap;
 
-        // 칸 배치·글자는 화면 크기나 키 배열(라인 모드)이 바뀔 때만 다시 설정한다
-        var layout = (s_screenW, s_screenH, labels, pitchIndex);
+        // 칸 배치·글자는 화면 크기·배율이나 키 배열(라인 모드)이 바뀔 때만 다시 설정한다
+        var layout = (s_screenW, s_screenH, labels, pitchIndex, ks);
         if (!s_keyLayoutValid || s_keyLayout != layout)
         {
             s_keyLayout = layout;
@@ -603,6 +607,7 @@ internal static class PlayOverlay
                 bg.sprite = null;
                 bg.enabled = true;
                 text.text = labels[i];
+                text.fontSize = 15f * ks;
                 x += w + gap;
             }
         }

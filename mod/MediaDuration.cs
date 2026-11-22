@@ -15,6 +15,64 @@ internal static class MediaDuration
     /// <summary>Ogg Vorbis: 마지막 페이지의 granule position / 식별 헤더의 샘플레이트. 대용량 파일 전체 로드 없이 스트림 앞/뒤만 읽는다.</summary>
     public static double? Ogg(string path) => Cached("ogg", path, ReadOgg);
 
+    /// <summary>
+    /// 음원 길이. RIFF 헤더면 WAV, 아니면 Ogg Vorbis로 읽는다 (CustomMedia.CreateAudioClip과 같은 기준).
+    /// 읽지 못하면 null — 호출부가 경고해야 곡이 기반 곡 길이에서 조용히 끝나지 않는다.
+    /// </summary>
+    public static double? Audio(string path) => Cached("audio", path, ReadAudio);
+
+    private static double? ReadAudio(string path)
+    {
+        try
+        {
+            Span<byte> magic = stackalloc byte[4];
+            using (var fs = File.OpenRead(path))
+                if (fs.Read(magic) == 4 && magic.SequenceEqual("RIFF"u8)) return ReadWav(path);
+        }
+        catch (Exception e) { Core.Log.Warning($"[MediaDuration] 음원 형식 확인 실패: {e.Message}"); return null; }
+        return ReadOgg(path);
+    }
+
+    /// <summary>WAV: fmt 청크의 byteRate와 data 청크 크기. data 크기가 0이거나 0xFFFFFFFF(스트리밍 기록)면 파일 끝까지로 본다.</summary>
+    private static double? ReadWav(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            long len = fs.Length;
+            if (len < 44) return null;
+            var hdr = new byte[12];
+            ReadFully(fs, hdr, 0, 12);
+            if (!hdr.AsSpan(8, 4).SequenceEqual("WAVE"u8)) return null;
+
+            uint byteRate = 0;
+            var chunk = new byte[8];
+            long pos = 12;
+            while (pos + 8 <= len)
+            {
+                fs.Position = pos;
+                ReadFully(fs, chunk, 0, 8);
+                uint size = BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(4));
+                long body = pos + 8;
+                if (chunk.AsSpan(0, 4).SequenceEqual("fmt "u8) && size >= 16)
+                {
+                    var fmt = new byte[16];
+                    ReadFully(fs, fmt, 0, 16);
+                    byteRate = BinaryPrimitives.ReadUInt32LittleEndian(fmt.AsSpan(8));
+                }
+                else if (chunk.AsSpan(0, 4).SequenceEqual("data"u8))
+                {
+                    if (byteRate == 0) return null;
+                    long dataLen = size == 0 || size == uint.MaxValue || body + size > len ? len - body : size;
+                    return dataLen > 0 ? dataLen / (double)byteRate : null;
+                }
+                pos = body + size + (size & 1); // 청크는 짝수 바이트로 정렬된다
+            }
+        }
+        catch (Exception e) { Core.Log.Warning($"[MediaDuration] wav 길이 읽기 실패: {e.Message}"); }
+        return null;
+    }
+
     /// <summary>MP4: moov/mvhd 박스의 duration / timescale.</summary>
     public static double? Mp4(string path) => Cached("mp4", path, ReadMp4);
 

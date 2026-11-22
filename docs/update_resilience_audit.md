@@ -461,6 +461,23 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 | C13-3 | `BmsConverter.Parse` / `Convert` | 헤더 구분자가 공백(`' '`)만 허용돼 탭(`#TITLE\t...`, `#WAV01\t...`) 헤더를 무시, 롱노트 끝 위치가 시작 이하(`pos <= start`)여도 0길이 롱노트 생성 | `HeaderSeparators = { ' ', '\t' }` 지원, `pos <= start` 롱노트는 단노트/경고로 방어 + 회귀 테스트 추가 |
 | C13-4 | `PlayOverlay.UpdateJudgmentBar` | 새 판정 틱(`TickN`)을 추가할 때 `s_label`만 `SetAsLastSibling()`을 호출해 `s_labelShadow`가 새 틱 뒤로 가려짐 | `s_labelShadow.transform.SetAsLastSibling()`을 `s_label` 직전에 함께 호출 |
 
+## 14차 (2026-11-22): 재감사 잔여 항목 정리 (v1.2.0)
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[PureLogic]` 실패 0건 — WAV 길이·`#RANDOM` 회귀 추가, 나머지 검사 동일). **인게임 실기 실행은 이 빌드로 미확인.** 오토 플레이를 공식 곡에도 켤 수 있는 범위 문제는 소유자 결정으로 이번 차수에서 제외했다(기록 보호는 여전히 `IsScorable` 안전장치에만 의존, 인게임 미확인).
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C14-1 | `CustomSongs.ExtendToMediaLength` / `MediaDuration` | 음원 길이를 못 읽으면(Opus, WAV 등) 조용히 `return`해 `endPosition`이 기반 곡 길이 그대로 → BGM·BGA 중간에 결과 화면으로 넘어감 | `MediaDuration.Audio`(RIFF면 WAV 아니면 Ogg) 추가, 음원·영상 길이를 못 읽으면 경고 로그 |
+| C14-2 | `BmsConverter.Parse` | `#RANDOM`/`#IF`를 무시해 모든 분기의 오브젝트가 한꺼번에 들어가 노트가 겹침 | 1번 분기만 변환 + 경고 (중첩 `#IF`는 미지원). 회귀 테스트 `BmsRandom` |
+| C14-3 | `CustomSongs.IsCustomId` / `IsCustomSong` | 접두사(`hwa_`)만 봐서 공식 곡 ID가 우연히 `hwa_`로 시작하면 잠금·보유 판정이 바뀜 | 등록된 ID(`s_byId`)인지까지 확인. 네이티브 접두사 검사가 안 맞는 일반 곡은 이전처럼 할당 없이 종료 |
+| C14-4 | `PlayOverlay` / `ModConfig` | 판정바(24×300)·키 칸(44)이 픽셀 고정이라 4K·HiDPI에서 작음 | `OverlayScale`(0.5~4) 추가, 배치 캐시 키에 배율 포함 |
+| C14-5 | `AddressableKeyRedirect.PatchedCount`, `ModHealth.cs`의 `global using` | 읽는 곳이 없는 프로퍼티, 관련 없는 파일에 숨은 전역 using | 삭제 / `mod/GlobalUsings.cs`로 이동 |
+
+### 확인 항목 (인게임)
+- 선곡 화면: 일반 곡 잠금 표시가 이전과 같은지, custom 카테고리 곡이 잠기지 않는지 (`IsCustomId` 변경).
+- `OverlayScale=2`로 올렸을 때 판정바·키뷰어 배치와 글자 크기.
+- WAV `music`을 쓰는 커스텀 곡이 끝까지 재생된 뒤 결과 화면으로 넘어가는지.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

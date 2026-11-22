@@ -31,8 +31,33 @@
 ## 설치
 
 1. 게임에 [MelonLoader 0.7.3](https://github.com/LavaGang/MelonLoader/releases)을 설치하고 게임을 한 번 실행합니다(Il2Cpp 어셈블리 생성).
-2. `PLATiNALAB.Mod.dll`을 `<게임 폴더>\Mods\`에 넣습니다.
+2. [Releases](https://github.com/magjangin/PLATiNA-LAB-custom-chart/releases)에서 최신 zip을 받아 안의 `Mods\PLATiNALAB.Mod.dll`을 `<게임 폴더>\Mods\`에 넣습니다. (직접 빌드하려면 아래 [빌드](#빌드) 참고)
 3. 게임을 실행하면 `<게임 폴더>\hwa\` 폴더와 샘플 곡이 생성됩니다.
+
+변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 있습니다. 모드는 특정 게임 빌드에서 검증했으므로, 게임이 업데이트됐다면 [게임이 업데이트됐을 때](#게임이-업데이트됐을-때)를 먼저 보세요.
+
+## 지원 형식과 제한
+
+| 항목 | 지원 | 제한 |
+| --- | --- | --- |
+| 음원 | `music.ogg`(Ogg Vorbis), WAV | 길이를 읽을 수 있어야 곡이 끝까지 재생됩니다. Opus·MP3는 길이를 못 읽어 곡이 중간에 끝날 수 있고, 경고 로그가 남습니다. |
+| 영상(BGA) | `video.mp4` | `moov`가 읽히는 일반 MP4. 길이 미정(fragmented) MP4는 길이를 못 읽습니다. |
+| 커버 | PNG, JPG | — |
+| 차트 | PPP JSON, BMS(`.bms/.bme/.bml/.pms`) | BMS의 박자 변경(`#mmm02`)·STOP은 미지원(4/4로 변환). `#RANDOM`/`#IF`는 항상 1번 분기만 변환. |
+| 판정 | 4레인 FourLines | 피치 노트 판정은 인게임 미확인. |
+
+`info.txt`와 곡 폴더 구성을 바꾸면 **게임을 다시 시작**해야 반영됩니다(곡 목록은 시작할 때 한 번 읽습니다). 차트(JSON/BMS)·음원·영상·커버 파일 수정은 재시작 없이 다음 플레이에 반영됩니다.
+
+## 문제 해결
+
+| 증상 | 확인 |
+| --- | --- |
+| 선곡 화면에 CUSTOM 탭이 없다 | `MelonLoader\Latest.log`에서 `[Health]`와 `[Init]` 줄을 보세요. `필수 패치 누락`이면 게임 업데이트로 커스텀 곡 주입이 꺼진 것입니다. |
+| 곡이 BGM/BGA 중간에 끝난다 | 로그의 `음원 길이를 읽지 못했습니다` 경고를 확인하세요. Ogg Vorbis 또는 WAV로 변환하면 됩니다. |
+| 노트가 겹친다 / 일부만 나온다 | 로그의 `[BMS]` 줄(레인 매핑, `#RANDOM` 경고)을 확인하고 `info.txt`에 `lanes = 16,11,12,13`처럼 지정하세요. |
+| 설정이 안 먹는다 | `[Config]` 경고(알 수 없는 키, 잘못된 값)를 확인하세요. 곡을 시작할 때마다 다시 읽습니다. |
+| 곡 번호(`hwa_NNN`)가 바뀌었다 | `UserData\PLATiNALAB\song_ids.json`에 폴더 이름별로 저장됩니다. 폴더 이름을 바꾸면 새 곡으로 취급됩니다. |
+| 원인을 더 자세히 보고 싶다 | `config.txt`에서 `DiagnosticLogs=1`로 켜고 다시 실행하세요. |
 
 ## 커스텀 곡 만들기
 
@@ -101,6 +126,9 @@ AutoPlay=0
 # 서버 랭킹 보호를 위해 hwa 커스텀 곡에서만 동작합니다.
 AllPerfect=0
 
+# 판정바·키뷰어 크기 배율 (기본 1, 0.5~4). 4K 등에서 작으면 2 정도로
+OverlayScale=1
+
 # 실시간 판정바 표시
 EnableJudgmentBar=1
 JudgmentBarVertical=1
@@ -129,6 +157,17 @@ dotnet build mod\PLATiNALAB.Mod.csproj -c Release
 ```
 
 게임이 다른 경로에 설치되어 있으면 `-p:GameRoot="C:\...\PLATiNA LAB"`로 덮어쓸 수 있습니다. 빌드가 끝나면 DLL이 `<GameRoot>\Mods\`로 자동 복사됩니다(게임이 실행 중이면 경고만 남기고 빌드는 계속됩니다).
+
+### 배포 (유지보수자용)
+
+`Core.cs`의 `MelonInfo` 버전과 `CHANGELOG.md`를 먼저 갱신한 뒤 커밋하고:
+
+```powershell
+.\tools\release.ps1            # 빌드 + 하네스 검증 + dist\ 에 zip 생성
+.\tools\release.ps1 -Publish   # 위 + 태그(v<버전>)와 GitHub 릴리즈 게시 (gh 필요)
+```
+
+zip에는 모드 DLL, README, CHANGELOG만 들어가며 게임 파일이나 디컴파일 코드는 포함되지 않습니다.
 
 ## 게임이 업데이트됐을 때
 

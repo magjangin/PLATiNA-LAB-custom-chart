@@ -16,3 +16,6 @@ mod/obj/
 # 오프라인 하네스 빌드 산출물
 tools/**/bin/
 tools/**/obj/
+
+# 릴리즈 산출물
+dist/

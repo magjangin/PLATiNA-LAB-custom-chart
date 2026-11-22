@@ -25,8 +25,6 @@ internal static class AddressableKeyRedirect
     private static readonly object s_logLock = new();
     private static readonly HashSet<string> s_loggedRedirects = new();
 
-    public static int PatchedCount { get; private set; }
-
     public static void Apply(HarmonyLib.Harmony harmony)
     {
         // 인터롭 어셈블리는 지연 로드되므로 OnInitializeMelon 시점엔 명시적으로 로드해야 한다
@@ -55,7 +53,6 @@ internal static class AddressableKeyRedirect
                 Core.Log.Warning($"[KeyRedirect] {m.DeclaringType?.FullName}.Locate 패치 실패: {e.Message}");
             }
         }
-        PatchedCount = count;
         if (skippedGenerated > 0) Core.Log.Msg($"[KeyRedirect] 컴파일러 생성 타입/메서드의 Locate {skippedGenerated}건 제외");
         if (count == 0) Core.Log.Warning("[KeyRedirect] IResourceLocator 구현체를 찾지 못함");
     }

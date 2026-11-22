@@ -150,11 +150,33 @@ internal static class BmsConverter
         var chart = new BmsChart { Path = path };
         var dataLines = headerOnly ? null : new List<(int measure, string channel, string data)>();
 
+        // #RANDOM n / #IF k / #ENDIF: 항상 1번 분기를 고른 것으로 처리한다 (모든 분기를 한꺼번에 넣으면 노트가 겹친다).
+        // 중첩 #IF는 지원하지 않고 가장 바깥 분기만 본다.
+        int randomRoll = 1;
+        bool skipping = false, sawRandom = false;
+
         // UTF-8, GBK(중국어), Shift-JIS(일본어), CP949(한국어) 자동 감지 적용
         foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
         {
             var line = raw.Trim().TrimStart('﻿');
             if (!line.StartsWith("#")) continue;
+
+            if (line.StartsWith("#ENDIF", StringComparison.OrdinalIgnoreCase)) { skipping = false; continue; }
+            if (line.StartsWith("#ENDRANDOM", StringComparison.OrdinalIgnoreCase)) { skipping = false; continue; }
+            if (line.StartsWith("#RANDOM", StringComparison.OrdinalIgnoreCase) || line.StartsWith("#SETRANDOM", StringComparison.OrdinalIgnoreCase))
+            {
+                sawRandom = true;
+                randomRoll = 1;
+                continue;
+            }
+            if (line.StartsWith("#IF", StringComparison.OrdinalIgnoreCase) && !line.StartsWith("#IFEND", StringComparison.OrdinalIgnoreCase))
+            {
+                sawRandom = true;
+                var ifArg = line.Length > 3 ? line[3..].Trim() : "";
+                skipping = !(int.TryParse(ifArg, out var branch) && branch == randomRoll);
+                continue;
+            }
+            if (skipping) continue;
 
             // #mmmcc:data — 채널 데이터 (오브젝트 폭은 헤더를 다 읽은 뒤 정한다)
             if (line.Length > 7 && line[6] == ':' && int.TryParse(line.AsSpan(1, 3), out var measure))
@@ -177,6 +199,8 @@ internal static class BmsConverter
             else if (key.StartsWith("BPM") && key.Length > 3 && TryDouble(arg, out var b)) chart.BpmTable[key[3..]] = b;
         }
 
+        if (sawRandom)
+            Core.Log.Warning($"[BMS] {System.IO.Path.GetFileName(path)}: #RANDOM/#IF가 있어 항상 1번 분기만 변환합니다 (다른 분기의 노트는 무시)");
         if (headerOnly) return chart;
 
         int width = chart.Wav.Count > 0 ? chart.Wav.Keys.Max(k => k.Length) : 2;

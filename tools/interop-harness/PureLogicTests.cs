@@ -110,6 +110,27 @@ internal static class PureLogicTests
             Console.WriteLine($"   [FAIL BmsTabHeader] title='{tabHdr.Title}' artist='{tabHdr.Artist}' bpm={tabHdr.Bpm}");
             failed++;
         }
+        // #RANDOM/#IF: 1번 분기만 변환해야 한다 (분기마다 노트가 있으면 겹치지 않아야 함)
+        var randPath = Path.Combine(tmp, "random.bms");
+        File.WriteAllText(randPath, string.Join('\n',
+            "#BPM 120",
+            "#WAV01 ShortNote.wav",
+            "#RANDOM 2",
+            "#IF 1",
+            "#00111:01",
+            "#ENDIF",
+            "#IF 2",
+            "#00112:01",
+            "#ENDIF",
+            "#ENDRANDOM",
+            "#00113:01"));
+        var randChart = BmsConverter.Parse(randPath);
+        var randChannels = randChart.Objects.Select(o => o.Channel).OrderBy(c => c).ToArray();
+        if (randChannels.Length != 2 || randChannels[0] != "11" || randChannels[1] != "13")
+        {
+            Console.WriteLine($"   [FAIL BmsRandom] 채널={string.Join(",", randChannels)} (기대 11,13)");
+            failed++;
+        }
         return failed;
     }
 
@@ -216,6 +237,36 @@ internal static class PureLogicTests
         if (MediaDuration.Mp4(mp4BadVerPath) != null)
         {
             Console.WriteLine($"   [FAIL MediaDuration.Mp4] 알 수 없는 mvhd 버전(2)에서 null이 아닌 값 반환");
+            failed++;
+        }
+
+        // 2-c) WAV: fmt(byteRate=176400) + data(352800B) = 2.0s. Audio()가 RIFF 헤더로 WAV를 알아본다.
+        var wavPath = Path.Combine(tmp, "test.wav");
+        var wav = new byte[12 + 24 + 8 + 352800];
+        Encoding.ASCII.GetBytes("RIFF").CopyTo(wav, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(wav.AsSpan(4, 4), (uint)(wav.Length - 8));
+        Encoding.ASCII.GetBytes("WAVE").CopyTo(wav, 8);
+        Encoding.ASCII.GetBytes("fmt ").CopyTo(wav, 12);
+        BinaryPrimitives.WriteUInt32LittleEndian(wav.AsSpan(16, 4), 16);
+        BinaryPrimitives.WriteUInt16LittleEndian(wav.AsSpan(20, 2), 1);       // PCM
+        BinaryPrimitives.WriteUInt16LittleEndian(wav.AsSpan(22, 2), 2);       // 채널
+        BinaryPrimitives.WriteUInt32LittleEndian(wav.AsSpan(24, 4), 44100);   // 샘플레이트
+        BinaryPrimitives.WriteUInt32LittleEndian(wav.AsSpan(28, 4), 176400);  // byteRate
+        BinaryPrimitives.WriteUInt16LittleEndian(wav.AsSpan(32, 2), 4);
+        BinaryPrimitives.WriteUInt16LittleEndian(wav.AsSpan(34, 2), 16);
+        Encoding.ASCII.GetBytes("data").CopyTo(wav, 36);
+        BinaryPrimitives.WriteUInt32LittleEndian(wav.AsSpan(40, 4), 352800);
+        File.WriteAllBytes(wavPath, wav);
+        var wavSec = MediaDuration.Audio(wavPath);
+        if (wavSec == null || Math.Abs(wavSec.Value - 2.0) > 0.001)
+        {
+            Console.WriteLine($"   [FAIL MediaDuration.Audio] WAV {wavSec} (기대 2.0)");
+            failed++;
+        }
+        var oggAudioSec = MediaDuration.Audio(oggPath);
+        if (oggAudioSec == null || Math.Abs(oggAudioSec.Value - 2.0) > 0.001)
+        {
+            Console.WriteLine($"   [FAIL MediaDuration.Audio] Ogg {oggAudioSec} (기대 2.0)");
             failed++;
         }
 

@@ -22,6 +22,9 @@ internal static class ModConfig
     public static int JudgmentBarRangeShape = -1;
     public static string JudgmentBarSide = "Center";
 
+    /// <summary>판정바·키뷰어 크기 배율 (기본 1, 범위 0.5~4). 4K 등 고해상도에서 키울 때 쓴다.</summary>
+    public static float OverlayScale = 1f;
+
     public static bool EnableKeyViewer = true;
     private static readonly Color DefaultPressedColor = new(0.15f, 0.75f, 0.85f, 0.85f);
     private static readonly Color DefaultNormalColor = new(0.08f, 0.08f, 0.08f, 0.65f);
@@ -55,6 +58,11 @@ AutoPlay=0
 # 올 퍼펙트 판정 조작 - PERFECT HIGH (1 = 켜짐, 0 = 꺼짐)
 # 서버 랭킹이 있는 게임이라 hwa 폴더 커스텀 곡에서만 동작합니다(커스텀 곡은 서버에 기록을 보내지 않음).
 AllPerfect=0
+
+# ===== [화면] =====
+
+# 판정바·키뷰어 크기 배율 (기본 1, 범위 0.5~4). 4K 등 고해상도에서 작아 보이면 2 정도로 올리세요.
+OverlayScale=1
 
 # ===== [판정바] =====
 
@@ -137,6 +145,7 @@ DiagnosticLogs=0
         AutoPlay = false;
         AllPerfect = false;
         DiagnosticLogs = false;
+        OverlayScale = 1f;
         EnableJudgmentBar = true;
         JudgmentBarVertical = true;
         JudgmentBarShape = 0;
@@ -155,6 +164,7 @@ DiagnosticLogs=0
             case "autoplay": AutoPlay = Bool(key, value, AutoPlay); break;
             case "allperfect": AllPerfect = Bool(key, value, AllPerfect); break;
             case "diagnosticlogs": DiagnosticLogs = Bool(key, value, DiagnosticLogs); break;
+            case "overlayscale": OverlayScale = Float(key, value, OverlayScale, 0.5f, 4f); break;
             case "enablejudgmentbar": EnableJudgmentBar = Bool(key, value, EnableJudgmentBar); break;
             case "judgmentbarvertical": JudgmentBarVertical = Bool(key, value, JudgmentBarVertical); break;
             case "judgmentbarshape": JudgmentBarShape = Int(key, value, JudgmentBarShape, 0, 2); break;
@@ -202,6 +212,18 @@ DiagnosticLogs=0
             return Math.Clamp(n, min, max);
         }
         WarnOnce($"val:{key}={v}", $"'{key}'의 값 '{v}'이(가) 정수가 아니어서 기본값({fallback})을 사용합니다.");
+        return fallback;
+    }
+
+    private static float Float(string key, string v, float fallback, float min, float max)
+    {
+        if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) && !float.IsNaN(n) && !float.IsInfinity(n))
+        {
+            if (n < min || n > max)
+                WarnOnce($"range:{key}={v}", $"'{key}'의 값 {n}이(가) 범위({min}~{max})를 벗어나 {Math.Clamp(n, min, max)}(으)로 조정합니다.");
+            return Math.Clamp(n, min, max);
+        }
+        WarnOnce($"val:{key}={v}", $"'{key}'의 값 '{v}'을(를) 숫자로 읽을 수 없어 기본값({fallback})을 사용합니다.");
         return fallback;
     }
 

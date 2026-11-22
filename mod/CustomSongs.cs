@@ -271,7 +271,12 @@ internal static class CustomSongs
     private static Dictionary<string, CustomChart> s_byKey = new();
     private static CustomSong[] s_songsByIdLengthDesc = Array.Empty<CustomSong>();
 
-    public static bool IsCustomId(string songId) => songId != null && songId.StartsWith(IdPrefix, StringComparison.Ordinal);
+    /// <summary>
+    /// 등록된 커스텀 곡 ID인지. 접두사(hwa_)만 보면 공식 곡 ID가 우연히 hwa_로 시작할 때 커스텀으로 오인해
+    /// 잠금·보유 판정이 바뀌므로, 실제로 Scan에 등록된 ID인지까지 확인한다.
+    /// </summary>
+    public static bool IsCustomId(string songId) =>
+        songId != null && songId.StartsWith(IdPrefix, StringComparison.Ordinal) && s_byId.ContainsKey(songId);
     public static CustomSong ById(string songId) => songId != null && s_byId.TryGetValue(songId, out var s) ? s : null;
 
     /// <summary>
@@ -328,7 +333,12 @@ internal static class CustomSongs
         {
             if (s_songIdField.TryReadPointer(song.Pointer, out var idPtr))
             {
-                if (!s_songIdField.NeedsSelfCheck) return NativeStrings.StartsWith(idPtr, IdPrefix);
+                if (!s_songIdField.NeedsSelfCheck)
+                {
+                    // 접두사가 안 맞는 대부분의 곡은 여기서 할당 없이 끝난다. 접두사가 맞을 때만 등록 여부를 확인한다.
+                    if (!NativeStrings.StartsWith(idPtr, IdPrefix)) return false;
+                    return IsCustomId(ReadSongId(song));
+                }
                 // 접두사 판정만 비교하면 일반 곡(모두 false)으로는 잘못된 오프셋을 못 잡는다 → 문자열 전체를 비교
                 var managed = ReadSongId(song);
                 s_songIdField.ReportCheck(NativeStrings.EqualsManaged(idPtr, managed), $"'{managed}'");
@@ -851,8 +861,13 @@ internal static class CustomSongs
     /// </summary>
     private static void ExtendToMediaLength(JsonObject root, CustomSong song)
     {
-        double? music = song.MusicPath != null ? MediaDuration.Ogg(song.MusicPath) : null;
+        double? music = song.MusicPath != null ? MediaDuration.Audio(song.MusicPath) : null;
         double? video = song.VideoPath != null ? MediaDuration.Mp4(song.VideoPath) : null;
+        // 길이를 못 읽으면 endPosition이 기반 곡 길이 그대로라 BGM·BGA 중간에서 결과 화면으로 넘어간다 → 조용히 넘기지 않는다
+        if (song.MusicPath != null && music == null)
+            Core.Log.Warning($"[CustomSongs] {song.Id} 음원 길이를 읽지 못했습니다 ({Path.GetFileName(song.MusicPath)}: Ogg Vorbis/WAV만 지원). 곡이 중간에 끝날 수 있으니 chart endPosition을 직접 확인하세요.");
+        if (song.VideoPath != null && video == null)
+            Core.Log.Warning($"[CustomSongs] {song.Id} 영상 길이를 읽지 못했습니다 ({Path.GetFileName(song.VideoPath)}: moov가 앞/뒤에 있는 일반 MP4만 지원).");
         double seconds = Math.Max(music ?? 0, video ?? 0);
         if (seconds <= 0) return;
 

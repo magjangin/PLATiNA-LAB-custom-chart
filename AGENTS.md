@@ -35,7 +35,7 @@
   - `AddressableKeyRedirect`가 Addressables `Locate` 구현체 3종에서 `hwa_NNN` 키를 기반 곡 ID(`s_baseSongId`)로 치환.
   - `PatternPlayer.DetermineRunning`에서 `DurationMicroSec - 3s`까지 클리어 연출 보류.
 - **미디어 (`mod/CustomMedia.cs`, `mod/MediaDuration.cs`):** 커버(`CoverManager.GetCoverSprite`, LRU 24개), BGM/미리듣기(`SoundData.FromHEAudioClip`), BGA(`BGAPlayer.SetClip`). Unity 6 `ReadOnlySpan` 래퍼 이슈는 `MarshalledUnityObject.MarshalNotNull` + `ManagedSpanWrapper` + `*_Injected` icall로 우회 (`AllowUnsafeBlocks`).
-- **BMS 변환 (`mod/BmsConverter.cs`):** `#WAV` 파일명(`ShortNote`, `LongNote 홀드 시작/끝`, `PitchNote`→key 255) + LNTYPE 1(5x/6x) + `#LNOBJ` 지원. 다국어 인코딩 자동 감지(`EncodingHelper`).
+- **BMS 변환 (`mod/BmsConverter.cs`):** `#WAV` 파일명(`ShortNote`, `LongNote 홀드 시작/끝`, `PitchNote`→key 255) + LNTYPE 1(5x/6x) + `#LNOBJ` 지원. `#RANDOM`/`#IF`는 1번 분기 고정(경고). 음원 길이는 `MediaDuration.Audio`(Ogg Vorbis/WAV)로 읽고 못 읽으면 경고. 다국어 인코딩 자동 감지(`EncodingHelper`).
 - **플레이 보조 & 오버레이 (`mod/ModConfig.cs`, `mod/PlayAssist.cs`, `mod/PlayOverlay.cs`):** `SaveCustomKey\config.txt` 핫리로드. 오토 플레이(`Extra.AutoPlay`), 올 퍼펙트(커스텀 곡 전용), uGUI Canvas 판정바·키뷰어.
 - **오프라인 세션 (`mod/OfflineSession.cs`):** 커스텀 곡의 `RequestGameStart`/`RenewGameSession`/`SendGameEnd` 서버 호출 차단 및 로컬 결과(`AccuracyV2Formula`/`MasteryV2Formula`) 생성.
 - **진단 패치 (`mod/DiagnosticPatches.cs`):** 로그 전용 패치는 `DiagnosticLogs=1`일 때만 수동 적용.
@@ -88,12 +88,14 @@
   (다른 경로에 게임이 있으면 `-p:GameRoot="C:\...\PLATiNA LAB"` 지정)
 - **배포 경로:** `PostBuild`가 `$(GameRoot)\Mods\PLATiNALAB.Mod.dll`로 자동 복사 (게임 실행 중 잠김 시 경고 후 계속).
 - **오프라인 하네스:** `dotnet run --project "H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness" -c Release`
+- **릴리즈 배포 (v1.2.0부터):** `Core.cs`의 `MelonInfo` 버전과 `CHANGELOG.md`를 갱신·커밋한 뒤 `tools\release.ps1`(검증 + `dist\` zip) → `tools\release.ps1 -Publish`(태그 `v<버전>` + `gh release create`). 하네스 종료 코드 0이 아니면 중단한다. zip에는 DLL·README·CHANGELOG만 넣고 게임 파일·디컴파일 코드는 넣지 않는다. 게임을 업데이트해 재검증하면 `TestedBuildId`·`TestedGameAssemblySize`와 README·CHANGELOG의 검증 기준 빌드를 함께 갱신한다.
 - **Git 원격:** `origin` = https://github.com/magjangin/PLATiNA-LAB-custom-chart (public), `local` = `H:\local-repos\PLATiNA LAB-unity-il2cpp.git` (로컬 백업). `dummy_dll/`, `src_dummy/`, `slices/`, `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외.
 
 ---
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
 - 최신 빌드 인게임 실기 확인: `[HookGuard]`(54개 메서드), 11차 백킹 프로퍼티 폴백(직접 경로가 정상이면 호출되지 않음 — 회귀 없음만 확인), 12차 `song_ids.json` 교체 저장(`.bak` 생성) 및 곡 번호 유지, `[Native]` 자체 검증, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.
+- 14차(v1.2.0) 인게임 확인: 일반 곡 잠금 표시 회귀 없음(`IsCustomId`가 등록 ID까지 확인), `OverlayScale` 배치, WAV 음원 곡 끝까지 재생, `#RANDOM` BMS 변환 경고. 오토 플레이를 공식 곡에도 켤 수 있는 범위는 소유자가 "애매하다"며 보류 — 기록 보호는 `IsScorable` 안전장치만 의존(인게임 미확인).
 - 키뷰어 위치가 하단 섹션 패널과 겹치는 문제 및 일시정지 화면 위 오버레이 표시 개선.
 - BMS 박자 변경(`#mmm02`)·STOP·PitchNote 인게임 판정 확인.
 - 결과 화면 `SectionDetailPanelController.Initialize` NRE 원인 해소 (`OfflineSession.EnsureSectionRecords` 빈 배열 방어 적용됨, 실기 재확인 필요).

@@ -1,5 +1,3 @@
-global using System.Runtime.CompilerServices;
-
 using System.Text.RegularExpressions;
 using MelonLoader.Utils;
 
