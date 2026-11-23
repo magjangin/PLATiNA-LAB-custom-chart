@@ -40,7 +40,7 @@ Unity 6 (`6000.3.25f1`) IL2CPP 기반 어셈블리(`Il2CppPlatinaLab.Main.dll`, 
 | :--- | :--- | :--- | :--- |
 | `CoverManager` | `GetCoverSprite(string)` | Postfix (`CustomMedia.cs`) | 커스텀 곡 커버 이미지 교체 (LRU 24개 캐시, Unity 6 icall 이중 래퍼) |
 | `PreviewSoundController` | `Play(string)` | Prefix (`CustomMedia.cs`) | 미리듣기 중인 커스텀 곡 추적 및 미디어 캐시 갱신 |
-| `SoundData` | `FromHEAudioClip(HEAudioClip, bool, Action)` | Prefix (`CustomMedia.cs`) | 미리듣기·인게임 BGM을 `music.ogg` 기반 `HEAudioClip`으로 교체 (LRU 8개 캐시) |
+| `SoundData` | `FromHEAudioClip(HEAudioClip, bool, Action)` | Prefix (`CustomMedia.cs`) | 미리듣기·인게임 BGM을 `music.ogg`/`music.wav` 기반 `HEAudioClip`으로 교체 (LRU 8개 캐시) |
 | `BGAPlayer` | `SetClip(...)` | Postfix (`CustomMedia.cs`) | 커스텀 곡 BGA를 `video.mp4` URL 모드로 전환 (Unity 6 `set_url_Injected` 이중 래퍼) |
 
 ---

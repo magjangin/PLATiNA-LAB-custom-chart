@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-23
+
+### 변경 (업데이트 내성)
+- MelonLoader 자동 `PatchAll`을 끄고(`[assembly: HarmonyDontPatchAll]`) `SafePatcher`가 `[HarmonyPatch]` 클래스를 하나씩 격리해 적용한다. 예전에는 게임 업데이트로 훅 하나(대상 메서드 삭제·오버로드 모호·인자 이름 변경)가 실패하면 그 뒤 패치가 전부 빠져, 무관한 기능까지(필수 패치가 뒤에 있으면 커스텀 곡 전체가) 꺼졌다. 실패한 클래스는 `[SafePatcher] … 적용 실패` 로그로 남고, 필수 패치 누락은 이전처럼 `[Health]`가 판단한다.
+- 하네스 `[SafePatch]` 검사 추가: 자동 `PatchAll`이 다시 켜지거나 `SafePatcher`가 빠지면 실패한다.
+
+### 수정
+- 곡 폴더의 `music.wav`(`audio.wav`·`song.wav`·`bgm.wav`·`音乐.wav`·`音频.wav`)를 찾지 못해 기반 곡 음원이 나오던 문제. WAV 재생·길이 읽기는 이미 지원했지만 파일 탐색 목록에 `.ogg`만 있었다. 같은 이름이면 `.ogg`가 우선.
+
+### 성능
+- 판정바·키뷰어: 매 프레임 틱(최대 32개)마다 부르던 `Mathf.*`, `new Color/Rect/Vector2`, `Rect.x` 같은 Unity 값 형식 헬퍼(전부 `il2cpp_runtime_invoke`)를 `MathF`·필드 직접 대입으로 바꿨다. `Image.enabled` 게터와 오버레이 `== null`·`Screen.width/height`도 매 프레임 대신 관리 플래그와 30프레임 간격 확인으로 줄였다. 모양 스프라이트(알약·다이아몬드) 생성도 픽셀마다 IL2CPP 호출을 하지 않는다.
+- `SongCategoryResourceCollection.GetDataSet` 훅이 모든 카테고리 키에서 먼저 하던 Unity `== null` 비교를 키 비교 뒤로 옮기고, `SoundData.FromHEAudioClip`·`DetermineRunning` 해제 경로의 `== null`을 참조 비교로 바꿨다.
+- 선곡 화면을 열 때마다 남던 `SongListBuilder.BuildNameBanners` 로그를 `DiagnosticLogs=1`일 때만 남긴다.
+
 ## [1.2.1] - 2026-11-23
 
 ### 수정

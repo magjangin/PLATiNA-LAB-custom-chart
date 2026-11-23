@@ -13,7 +13,7 @@ namespace PLATiNALAB.Mod;
 /// <summary>
 /// hwa\ 곡 폴더의 파일을 게임 리소스 대신 쓰게 한다.
 /// - 썸네일.png → CoverManager.GetCoverSprite
-/// - music.ogg  → 미리듣기 + 인게임 BGM (둘 다 SoundData.FromHEAudioClip에서 교체)
+/// - music.ogg / music.wav → 미리듣기 + 인게임 BGM (둘 다 SoundData.FromHEAudioClip에서 교체)
 /// - video.mp4  → BGAPlayer.SetClip 직후 VideoPlayer를 URL 모드로 전환
 /// 게임 음원(.fmod.ogg)은 HEAudioClip(ScriptableObject)에 ogg/wav 바이트를 담은 것이고
 /// SoundData.FromHEAudioClip(clip, isLooping, afterDispose)로 재생 객체를 만든다(HighendGames.HEAudio 인터롭 실측).
@@ -449,7 +449,8 @@ internal static class SoundData_FromHEAudioClip_Patch
     {
         var song = CustomSongs.Current?.Song ?? CustomMedia.PreviewSong;
         var baseId = CustomSongs.s_baseSongId;
-        if (song == null || baseId == null || audioClip == null || HookGuard.IsDisabled(Hook)) return;
+        // 효과음마다 불리는 경로 → Unity Object의 == null(IL2CPP 호출) 대신 참조 비교
+        if (song == null || baseId == null || audioClip is null || HookGuard.IsDisabled(Hook)) return;
         var path = song.MusicPath;
         if (path == null) return;
         try { TryReplace(ref audioClip, ref afterDispose, baseId, path); }

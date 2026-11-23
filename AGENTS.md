@@ -20,7 +20,7 @@
 - **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과)
 - **후킹 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
-- **업데이트 내성 감사 & 감사 이력(1~16차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
+- **업데이트 내성 감사 & 감사 이력(1~17차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -39,6 +39,8 @@
 - **플레이 보조 & 오버레이 (`mod/ModConfig.cs`, `mod/PlayAssist.cs`, `mod/PlayOverlay.cs`):** `SaveCustomKey\config.txt` 핫리로드. 오토 플레이(`Extra.AutoPlay`), 올 퍼펙트(커스텀 곡 전용), uGUI Canvas 판정바·키뷰어.
 - **오프라인 세션 (`mod/OfflineSession.cs`):** 커스텀 곡의 `RequestGameStart`/`RenewGameSession`/`SendGameEnd` 서버 호출 차단 및 로컬 결과(`AccuracyV2Formula`/`MasteryV2Formula`) 생성.
 - **진단 패치 (`mod/DiagnosticPatches.cs`):** 로그 전용 패치는 `DiagnosticLogs=1`일 때만 수동 적용.
+- **패치 적용 (`mod/SafePatcher.cs`, 17차):** `[assembly: HarmonyDontPatchAll]`로 MelonLoader 자동 `PatchAll`을 끄고, `Core.OnInitializeMelon`에서 `[HarmonyPatch]` 클래스마다 `CreateClassProcessor(t).Patch()`를 따로 try/catch로 적용한다. 새 `[HarmonyPatch]` 클래스는 별도 등록 없이 자동 수집된다. 하네스 `[SafePatch]`가 자동 PatchAll이 꺼져 있는지 검사한다.
+- **오버레이 성능 규칙 (`mod/PlayOverlay.cs`, 17차):** 매 프레임 경로에서 `Mathf.*`, `new Color/Rect/Vector2`, `Rect.x` 등 Unity 값 형식 헬퍼와 Unity `== null`을 쓰지 않는다(전부 IL2CPP 호출). `Rgba`/`Vec2`/`Box`(필드 직접 대입)와 `MathF`·`Math`를 쓰고, 화면 크기·오버레이 생존은 30프레임마다 확인한다.
 - **코드 작성 필수 규칙 (하네스 `[Guarded]`/`[HarmonyPatch]`/`[PatchArgs]`/`[Required]`/`[Layout]`/`[Body]`/`[Diag]`/`[NativeField]`/`[Reflect]`/`[GuardKey]`/`[Mark]`/`[Fingerprint]` 검증):**
   1. 게임 타입 직접 참조를 `try`로 감쌀 때는 `[MethodImpl(NoInlining), Guarded("...")]` 별도 메서드로 분리 (같은 메서드의 `try`는 JIT 실패를 못 잡음). 게임 멤버를 직접 참조하는 모든 `[NoInlining]` 격리 메서드에도 `[Guarded]` 필수.
   2. 모드 클래스 필드에 게임 `enum`을 그대로 저장하지 말고 `int`로 저장.
@@ -95,6 +97,7 @@
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
 - 최신 빌드 인게임 실기 확인: `[HookGuard]`(54개 메서드), 11차 백킹 프로퍼티 폴백(직접 경로가 정상이면 호출되지 않음 — 회귀 없음만 확인), 12차 `song_ids.json` 교체 저장(`.bak` 생성) 및 곡 번호 유지, `[Native]` 자체 검증, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.
+- 17차(v1.3.0) 인게임 확인: 시작 로그 `[SafePatcher] 패치 클래스 N개 모두 적용` + `[Health] 필수 패치 정상`, 판정바·키뷰어 표시가 이전과 같은지(색·위치·틱 페이드, 창 크기 변경 후 30프레임 안에 재배치), `music.wav`만 있는 곡의 BGM·길이 연장.
 - 16차(v1.2.1) 인게임 확인: 오토 플레이 중 설정 저장 후에도 오토 플레이 유지(Save Finalizer), `#ELSE` 분기가 있는 BMS 변환 결과.
 - 14차(v1.2.0) 인게임 확인: 일반 곡 잠금 표시 회귀 없음(`IsCustomId`가 등록 ID까지 확인), `OverlayScale` 배치, WAV 음원 곡 끝까지 재생, `#RANDOM` BMS 변환 경고. 오토 플레이를 공식 곡에도 켤 수 있는 범위는 소유자가 "애매하다"며 보류 — 기록 보호는 `IsScorable` 안전장치만 의존(인게임 미확인).
 - 키뷰어 위치가 하단 섹션 패널과 겹치는 문제 및 일시정지 화면 위 오버레이 표시 개선.
