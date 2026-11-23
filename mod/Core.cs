@@ -16,7 +16,7 @@ public class Core : MelonMod
         Log = LoggerInstance;
         Patcher = HarmonyInstance;
         Log.Msg("==================================================");
-        Log.Msg("[PLATiNALAB.Mod] PLATiNA LAB Custom Mod v1.1.0 Loaded!");
+        Log.Msg($"[PLATiNALAB.Mod] PLATiNA LAB Custom Mod v{Info.Version} Loaded!");
         Log.Msg("==================================================");
         // 초기화 단계는 서로 독립 — 한 단계가 실패해도(파일 손상·게임 업데이트) 나머지(특히 일반 곡 플레이에 쓰는 훅)는 계속 살린다.
         // 실패의 영향은 ModHealth가 점검한다 (예: Locate 패치가 없으면 커스텀 곡 주입을 끔).

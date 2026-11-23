@@ -3,6 +3,11 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르고, 버전은 `mod/Core.cs`의 `MelonInfo`와 같습니다.
 검증 기준 게임: PLATiNA LAB Build `25981392` (`GameAssembly.dll` 96,829,440바이트), MelonLoader 0.7.3.
 
+## [Unreleased]
+
+### 변경
+- 시작 로그의 버전 문자열을 `MelonInfo`에서 읽도록 수정 (1.2.0인데 `v1.1.0`으로 찍히던 하드코딩 제거).
+
 ## [1.2.0] - 2026-11-22
 
 ### 추가

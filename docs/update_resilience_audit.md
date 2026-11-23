@@ -478,6 +478,14 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - `OverlayScale=2`로 올렸을 때 판정바·키뷰어 배치와 글자 크기.
 - WAV `music`을 쓰는 커스텀 곡이 끝까지 재생된 뒤 결과 화면으로 넘어가는지.
 
+## 15차 (2026-11-23): 전체 재감사 (경량)
+
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[Guarded]` 54·`[HarmonyPatch]` 26·`[PatchArgs]` 30·`[Required]` 10·`[Layout]` 283·`[Body]` 392·`[Reflect]` 35·`[GuardKey]`·`[Mark]`·`[Fingerprint]` 모두 실패 0). **인게임 실기 실행은 이 빌드로 미확인.**
+
+- 병목 점검: `Locate` 훅(네이티브 접두사 검사 후 할당 없이 종료), `PlayOverlay.Update`(비플레이 시 조기 반환, 틱 위치·글자는 버전 변경 시에만 갱신), `ModConfig.Load`(곡 시작 시에만, 수정 시각 비교)를 재확인 — 추가 개선점 없음.
+- C15-1 `Core.OnInitializeMelon`: 시작 로그가 `v1.1.0`으로 하드코딩돼 1.2.0 빌드와 불일치 → `Info.Version` 사용.
+- 게임 빌드는 여전히 `25981392`로 동일해 검증 기준 상수 갱신 없음.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
