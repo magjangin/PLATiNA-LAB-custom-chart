@@ -798,7 +798,8 @@ internal static class CustomSongs
             double firstPos = double.MaxValue;
             foreach (var n in notes)
             {
-                if (n?["startPosition"] is not JsonValue v || !v.TryGetValue<double>(out var pos)) continue;
+                double pos = BmsConverter.ReadDouble(n?["startPosition"], double.NaN);
+                if (double.IsNaN(pos)) continue;
                 if (first == null || pos < firstPos) { first = n; firstPos = pos; }
             }
             if (first != null) kept.Add(JsonNode.Parse(first.ToJsonString()));
@@ -834,11 +835,11 @@ internal static class CustomSongs
     {
         try
         {
-            var baseSound = baseRoot?["bgms"]?.AsArray().FirstOrDefault()?["sound"]?.GetValue<string>();
+            var baseSound = (baseRoot?["bgms"] as JsonArray)?.FirstOrDefault()?["sound"] is JsonValue sv && sv.TryGetValue<string>(out var bs) ? bs : null;
             var bgms = root["bgms"] as JsonArray;
             if (bgms == null || bgms.Count == 0)
             {
-                bgms = new JsonArray { new JsonObject { ["position"] = 1, ["sound"] = baseSound, ["column"] = 0 } };
+                bgms = new JsonArray { new JsonObject { ["position"] = 1.0, ["sound"] = baseSound, ["column"] = 0 } };
                 root["bgms"] = bgms;
             }
             if (baseSound != null)
@@ -871,13 +872,14 @@ internal static class CustomSongs
         double seconds = Math.Max(music ?? 0, video ?? 0);
         if (seconds <= 0) return;
 
-        double bpm = root["initialBpm"]?.GetValue<double>() ?? 120;
+        // 값을 읽을 때 GetValue<double>()을 쓰면 int로 만든 값·문자열 숫자에서 예외가 나 연장 전체가 빠진다 → ReadDouble
+        double bpm = BmsConverter.ReadDouble(root["initialBpm"], 120);
         if (bpm <= 0) bpm = 120;
-        double bgmPos = root["bgms"]?.AsArray().FirstOrDefault()?["position"]?.GetValue<double>() ?? 1;
+        double bgmPos = BmsConverter.ReadDouble((root["bgms"] as JsonArray)?.FirstOrDefault()?["position"], 1);
         // BPM 변속은 구간별로 반영한다 (STOP·박자 변경은 반영하지 못한다)
         var bpms = root["bpms"] as JsonObject;
         double needed = Math.Ceiling(BmsConverter.PositionAfterSeconds(bgmPos, seconds + 1.0, bpm, bpms));
-        double current = root["endPosition"]?.GetValue<double>() ?? 0;
+        double current = BmsConverter.ReadDouble(root["endPosition"], 0);
         if (needed <= current) return;
         root["endPosition"] = needed;
         Core.Log.Msg($"[CustomSongs] {song.Id} endPosition {current} → {needed} (music {music:F1}s, video {video:F1}s, bpm {bpm})");

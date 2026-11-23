@@ -1,7 +1,7 @@
 using MelonLoader;
 using PLATiNALAB.Mod;
 
-[assembly: MelonInfo(typeof(Core), "PLATiNA LAB Custom Mod", "1.2.0", "Hwa-young-wang")]
+[assembly: MelonInfo(typeof(Core), "PLATiNA LAB Custom Mod", "1.2.1", "Hwa-young-wang")]
 [assembly: MelonGame("HIGHEND GAMES", "PLATiNA  LAB")]
 
 namespace PLATiNALAB.Mod;

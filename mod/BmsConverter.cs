@@ -152,8 +152,9 @@ internal static class BmsConverter
 
         // #RANDOM n / #IF k / #ENDIF: 항상 1번 분기를 고른 것으로 처리한다 (모든 분기를 한꺼번에 넣으면 노트가 겹친다).
         // 중첩 #IF는 지원하지 않고 가장 바깥 분기만 본다.
+        // #ELSEIF/#ELSE는 앞 분기가 이미 골라졌으면 건너뛰고, #IFEND는 #ENDIF와 같다 (예전에는 #ELSE 분기 노트가 1번 분기와 겹쳐 들어갔다).
         int randomRoll = 1;
-        bool skipping = false, sawRandom = false;
+        bool skipping = false, sawRandom = false, branchTaken = false;
 
         // UTF-8, GBK(중국어), Shift-JIS(일본어), CP949(한국어) 자동 감지 적용
         foreach (var raw in EncodingHelper.ReadAllLinesSafe(path))
@@ -161,19 +162,38 @@ internal static class BmsConverter
             var line = raw.Trim().TrimStart('﻿');
             if (!line.StartsWith("#")) continue;
 
-            if (line.StartsWith("#ENDIF", StringComparison.OrdinalIgnoreCase)) { skipping = false; continue; }
-            if (line.StartsWith("#ENDRANDOM", StringComparison.OrdinalIgnoreCase)) { skipping = false; continue; }
+            if (line.StartsWith("#ENDIF", StringComparison.OrdinalIgnoreCase) || line.StartsWith("#IFEND", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith("#ENDRANDOM", StringComparison.OrdinalIgnoreCase))
+            {
+                skipping = false;
+                branchTaken = false;
+                continue;
+            }
             if (line.StartsWith("#RANDOM", StringComparison.OrdinalIgnoreCase) || line.StartsWith("#SETRANDOM", StringComparison.OrdinalIgnoreCase))
             {
                 sawRandom = true;
                 randomRoll = 1;
                 continue;
             }
-            if (line.StartsWith("#IF", StringComparison.OrdinalIgnoreCase) && !line.StartsWith("#IFEND", StringComparison.OrdinalIgnoreCase))
+            if (line.StartsWith("#ELSEIF", StringComparison.OrdinalIgnoreCase))
             {
                 sawRandom = true;
-                var ifArg = line.Length > 3 ? line[3..].Trim() : "";
-                skipping = !(int.TryParse(ifArg, out var branch) && branch == randomRoll);
+                skipping = branchTaken || !IsRolledBranch(line[7..], randomRoll);
+                branchTaken |= !skipping;
+                continue;
+            }
+            if (line.StartsWith("#ELSE", StringComparison.OrdinalIgnoreCase))
+            {
+                sawRandom = true;
+                skipping = branchTaken;
+                branchTaken = true;
+                continue;
+            }
+            if (line.StartsWith("#IF", StringComparison.OrdinalIgnoreCase))
+            {
+                sawRandom = true;
+                skipping = !IsRolledBranch(line[3..], randomRoll);
+                branchTaken = !skipping;
                 continue;
             }
             if (skipping) continue;
@@ -191,7 +211,7 @@ internal static class BmsConverter
             var arg = line[(space + 1)..].Trim();
             if (key == "TITLE") chart.Title = TextSanitizer.Sanitize(arg);
             else if (key == "ARTIST") chart.Artist = TextSanitizer.Sanitize(arg);
-            else if (key == "BPM" && TryDouble(arg, out var bpm)) chart.Bpm = bpm;
+            else if (key == "BPM" && TryDouble(arg, out var bpm) && bpm > 0 && !double.IsInfinity(bpm)) chart.Bpm = bpm; // 0 이하 BPM은 게임에서 0으로 나누기가 된다 → 기본값 유지
             else if (key == "PLAYLEVEL" && int.TryParse(arg, out var lv)) chart.PlayLevel = lv;
             else if (headerOnly) continue;
             else if (key == "LNOBJ") chart.LnObj = arg.ToUpperInvariant();
@@ -218,6 +238,20 @@ internal static class BmsConverter
         }
         chart.Objects.Sort(CompareObjects);
         return chart;
+    }
+
+    private static bool IsRolledBranch(string arg, int roll) => int.TryParse(arg.Trim(), out var branch) && branch == roll;
+
+    /// <summary>
+    /// JSON 숫자를 내부 형식(int/double/JsonElement/문자열)과 무관하게 읽는다.
+    /// JsonValue.GetValue&lt;double&gt;()는 int로 만든 값(예: ["position"] = 1)에서 InvalidOperationException을 던진다.
+    /// </summary>
+    internal static double ReadDouble(JsonNode node, double fallback)
+    {
+        if (node is not JsonValue v) return fallback;
+        var text = v.TryGetValue<string>(out var str) ? str : v.ToJsonString();
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) && !double.IsNaN(d) && !double.IsInfinity(d)
+            ? d : fallback;
     }
 
     private static int CompareObjects(BmsObject a, BmsObject b)
@@ -332,15 +366,22 @@ internal static class BmsConverter
             return cmp != 0 ? cmp : a.key.CompareTo(b.key);
         });
 
-        // 같은 위치·같은 레인·같은 끝의 노트가 겹치면 게임에서 한 노트가 두 번 판정 대상이 된다
+        // 같은 위치·같은 레인의 노트가 겹치면 게임에서 한 노트가 두 번 판정 대상이 된다
         // (BGM 채널에 키음을 겹쳐 쓰거나 같은 마디를 두 번 적은 BMS) → 하나만 남긴다.
+        // 끝이 달라도(단노트 + 롱노트 시작, 길이가 다른 롱노트 둘) 같은 자리이므로 하나로 합치고, 가장 긴 노트를 남긴다.
         int duplicates = 0;
-        var seenNotes = new HashSet<(double, double?, int)>();
+        var seenNotes = new Dictionary<(double, int), int>();
         var unique = new List<(double start, double? end, int key)>(notes.Count);
         foreach (var n in notes)
         {
-            if (seenNotes.Add((n.start, n.end, n.key))) unique.Add(n);
-            else duplicates++;
+            if (!seenNotes.TryGetValue((n.start, n.key), out var at))
+            {
+                seenNotes[(n.start, n.key)] = unique.Count;
+                unique.Add(n);
+                continue;
+            }
+            duplicates++;
+            if ((n.end ?? n.start) > (unique[at].end ?? unique[at].start)) unique[at] = n;
         }
         if (duplicates > 0)
         {
@@ -398,7 +439,7 @@ internal static class BmsConverter
             ["stops"] = new JsonObject(),
             ["scrolls"] = new JsonObject(),
             ["bgms"] = new JsonArray(new JsonObject { ["position"] = bgmPosition, ["sound"] = musicFileName ?? "music.ogg", ["column"] = 0 }),
-            ["bgaPosition"] = baseChart?["bgaPosition"]?.GetValue<double>() ?? 0,
+            ["bgaPosition"] = ReadDouble(baseChart?["bgaPosition"], 0),
             ["notes"] = noteArray,
             ["sections"] = new JsonArray(new JsonObject { ["name"] = "NOTES", ["startPosition"] = 0 }),
             ["endPosition"] = Math.Ceiling(last) + 1,
@@ -417,11 +458,9 @@ internal static class BmsConverter
         {
             foreach (var kv in bpms)
             {
-                // 값의 내부 형식(int/double/JsonElement)과 무관하게 읽도록 JSON 텍스트로 파싱한다 (TryGetValue<double>은 int로 만든 값에서 실패)
-                if (double.TryParse(kv.Key, NumberStyles.Float, CultureInfo.InvariantCulture, out var p) &&
-                    kv.Value is JsonValue v &&
-                    double.TryParse(v.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var b) &&
-                    b > 0 && !double.IsInfinity(b))
+                // 값의 내부 형식(int/double/JsonElement)과 무관하게 읽는다 (ReadDouble 설명 참고)
+                double b = ReadDouble(kv.Value, 0);
+                if (double.TryParse(kv.Key, NumberStyles.Float, CultureInfo.InvariantCulture, out var p) && b > 0)
                     changes.Add((p, b));
             }
             changes.Sort((a, c) => a.pos.CompareTo(c.pos));

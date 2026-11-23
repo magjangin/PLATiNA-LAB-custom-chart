@@ -5,13 +5,21 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-23
+
 ### 수정
 - 음원·영상 길이에 맞춰 `endPosition`을 늘릴 때 초기 BPM 하나로만 계산해, 뒤쪽에서 BPM이 빨라지는 곡이 중간에 끝나던 문제 (`BmsConverter.PositionAfterSeconds`가 BPM 변속을 구간별로 반영).
 - BMS에서 같은 위치·레인에 겹친 노트가 그대로 변환되던 문제 (하나로 합침), `info.txt` `lanes`를 5개 이상 적으면 key 5 이상 노트가 생기던 문제 (앞 4개만 사용).
 - 커버 파일을 읽다 실패(잠김·저장 중)하면 파일을 수정하기 전까지 다시 시도하지 않던 문제.
+- `chart.json`에 `bgms`가 없거나 `initialBpm`·`endPosition`·`bgms[].position`이 문자열 숫자면 음원·영상 길이 연장이 예외로 통째로 빠져 곡이 기반 곡 길이에서 끝나던 문제 (`BmsConverter.ReadDouble`로 형식과 무관하게 읽음).
+- BMS `#ELSE`/`#ELSEIF` 분기 노트가 1번 분기와 함께 들어가 겹치던 문제, `#IFEND`가 분기를 닫지 못해 뒤쪽 노트가 모두 빠질 수 있던 문제.
+- 같은 위치·레인에 단노트와 롱노트 시작이 겹치면 둘 다 남던 문제 (더 긴 노트 하나로 합침).
+- `#BPM 0`(또는 음수)이 그대로 `initialBpm`이 되던 문제 (기본 130 유지).
+- 오토 플레이 중 설정 저장(`InGameSettingManager.Save`)이 예외로 끝나면 오토 플레이 값이 다시 걸리지 않던 문제 (Postfix → Finalizer).
 
 ### 변경
 - 시작 로그의 버전 문자열을 `MelonInfo`에서 읽도록 수정 (1.2.0인데 `v1.1.0`으로 찍히던 하드코딩 제거).
+- 하네스 회귀 테스트 추가: `BmsOverlapHold`, `BmsElse`, `BmsZeroBpm`, `ReadDouble`.
 
 ## [1.2.0] - 2026-11-22
 

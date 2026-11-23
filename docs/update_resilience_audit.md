@@ -491,6 +491,15 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - C15-1 `Core.OnInitializeMelon`: 시작 로그가 `v1.1.0`으로 하드코딩돼 1.2.0 빌드와 불일치 → `Info.Version` 사용.
 - 게임 빌드는 여전히 `25981392`로 동일해 검증 기준 상수 갱신 없음.
 
+## 16차 (2026-11-23): 전체 재감사 → v1.2.1
+
+- C16-1 `CustomSongs.ExtendToMediaLength`/`PrepareChart`/`MakeFirstNoteChart`, `BmsConverter.Convert`: `JsonValue.GetValue<double>()`는 int로 만든 값(예: `bgms`가 없을 때 만들던 `["position"] = 1`)과 문자열 숫자에서 `InvalidOperationException`을 던져, `PrepareChart`의 catch로 빠지면서 길이 연장이 조용히 생략됐다 → `BmsConverter.ReadDouble`(int/double/JsonElement/문자열 공통) 하나로 통일, 새 `bgms`는 `1.0`으로 생성. 회귀 테스트 `ReadDouble`.
+- C16-2 `BmsConverter.Parse`: `#ELSE`/`#ELSEIF`를 몰라 1번 분기와 `#ELSE` 분기가 함께 들어갔고, `#IFEND`(일부 에디터의 `#ENDIF` 별칭)는 분기를 닫지 못해 그 뒤 오브젝트가 전부 빠질 수 있었다 → 분기 선택 상태(`branchTaken`) 추적. 회귀 테스트 `BmsElse`.
+- C16-3 `BmsConverter.Convert` 중복 제거: (시작, 끝, 레인) 기준이라 단노트 + 같은 자리 롱노트 시작이 둘 다 남았다 → (시작, 레인) 기준으로 합치고 더 긴 노트를 남긴다. 회귀 테스트 `BmsOverlapHold`.
+- C16-4 `#BPM 0`·음수가 `initialBpm`으로 들어가던 문제 → 무시하고 기본 130. 회귀 테스트 `BmsZeroBpm`.
+- C16-5 `PlayAssist.InGameSettingManager_Save_Patch`: 15차에 "확인만" 했던 Postfix 미실행 문제를 Finalizer로 전환 (반환형 void, `__exception` 없음 → 원본 예외는 그대로 다시 던져진다).
+- 병목: 새 코드는 차트 변환(플레이당 1회)에만 있고 핫패스 변경 없음.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

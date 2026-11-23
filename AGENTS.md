@@ -20,7 +20,7 @@
 - **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과)
 - **후킹 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
-- **업데이트 내성 감사 & 감사 이력(1~13차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
+- **업데이트 내성 감사 & 감사 이력(1~16차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -95,6 +95,7 @@
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
 - 최신 빌드 인게임 실기 확인: `[HookGuard]`(54개 메서드), 11차 백킹 프로퍼티 폴백(직접 경로가 정상이면 호출되지 않음 — 회귀 없음만 확인), 12차 `song_ids.json` 교체 저장(`.bak` 생성) 및 곡 번호 유지, `[Native]` 자체 검증, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.
+- 16차(v1.2.1) 인게임 확인: 오토 플레이 중 설정 저장 후에도 오토 플레이 유지(Save Finalizer), `#ELSE` 분기가 있는 BMS 변환 결과.
 - 14차(v1.2.0) 인게임 확인: 일반 곡 잠금 표시 회귀 없음(`IsCustomId`가 등록 ID까지 확인), `OverlayScale` 배치, WAV 음원 곡 끝까지 재생, `#RANDOM` BMS 변환 경고. 오토 플레이를 공식 곡에도 켤 수 있는 범위는 소유자가 "애매하다"며 보류 — 기록 보호는 `IsScorable` 안전장치만 의존(인게임 미확인).
 - 키뷰어 위치가 하단 섹션 패널과 겹치는 문제 및 일시정지 화면 위 오버레이 표시 개선.
 - BMS 박자 변경(`#mmm02`)·STOP·PitchNote 인게임 판정 확인.

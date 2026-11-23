@@ -43,7 +43,7 @@
 | 음원 | `music.ogg`(Ogg Vorbis), WAV | 길이를 읽을 수 있어야 곡이 끝까지 재생됩니다. Opus·MP3는 길이를 못 읽어 곡이 중간에 끝날 수 있고, 경고 로그가 남습니다. |
 | 영상(BGA) | `video.mp4` | `moov`가 읽히는 일반 MP4. 길이 미정(fragmented) MP4는 길이를 못 읽습니다. |
 | 커버 | PNG, JPG | — |
-| 차트 | PPP JSON, BMS(`.bms/.bme/.bml/.pms`) | BMS의 박자 변경(`#mmm02`)·STOP은 미지원(4/4로 변환). `#RANDOM`/`#IF`는 항상 1번 분기만 변환. |
+| 차트 | PPP JSON, BMS(`.bms/.bme/.bml/.pms`) | BMS의 박자 변경(`#mmm02`)·STOP은 미지원(4/4로 변환). `#RANDOM`/`#IF`/`#ELSE`는 항상 1번 분기만 변환. |
 | 판정 | 4레인 FourLines | 피치 노트 판정은 인게임 미확인. |
 
 `info.txt`와 곡 폴더 구성을 바꾸면 **게임을 다시 시작**해야 반영됩니다(곡 목록은 시작할 때 한 번 읽습니다). 차트(JSON/BMS)·음원·영상·커버 파일 수정은 재시작 없이 다음 플레이에 반영됩니다.
