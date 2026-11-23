@@ -145,6 +145,52 @@ internal static class PureLogicTests
             failed++;
         }
 
+        // 단노트와 롱노트 시작이 같은 자리면 하나로 합치고 롱노트를 남긴다 (16차)
+        var overlapPath = Path.Combine(tmp, "overlap.bms");
+        File.WriteAllText(overlapPath, string.Join('\n',
+            "#BPM 120", "#WAV01 ShortNote.wav", "#WAV02 LongNote 홀드 시작.wav", "#WAV03 LongNote 홀드 끝.wav",
+            "#00111:01", "#00111:02", "#00211:03"));
+        var overlapNotes = BmsConverter.Convert(BmsConverter.Parse(overlapPath), null, new[] { "11" }, null)["notes"]!.AsArray();
+        if (overlapNotes.Count != 1 || overlapNotes[0]!["endPosition"] == null)
+        {
+            Console.WriteLine($"   [FAIL BmsOverlapHold] 노트 수={overlapNotes.Count} (기대 1, 롱노트)");
+            failed++;
+        }
+
+        // #ELSE/#ELSEIF/#IFEND: 1번 분기를 골랐으면 나머지 분기는 넣지 않는다 (16차)
+        var elsePath = Path.Combine(tmp, "else.bms");
+        File.WriteAllText(elsePath, string.Join('\n',
+            "#BPM 0", "#WAV01 ShortNote.wav",
+            "#RANDOM 3",
+            "#IF 1", "#00111:01",
+            "#ELSEIF 2", "#00112:01",
+            "#ELSE", "#00113:01",
+            "#IFEND",
+            "#IF 2", "#00114:01",
+            "#ELSE", "#00115:01",
+            "#ENDIF",
+            "#00118:01"));
+        var elseChart = BmsConverter.Parse(elsePath);
+        var elseChannels = string.Join(",", elseChart.Objects.Select(o => o.Channel).OrderBy(c => c));
+        if (elseChannels != "11,15,18")
+        {
+            Console.WriteLine($"   [FAIL BmsElse] 채널={elseChannels} (기대 11,15,18)");
+            failed++;
+        }
+        if (Math.Abs(elseChart.Bpm - 130) > 1e-9)
+        {
+            Console.WriteLine($"   [FAIL BmsZeroBpm] #BPM 0 → {elseChart.Bpm} (기대 기본값 130)");
+            failed++;
+        }
+
+        // JSON 숫자 읽기: int로 만든 값·문자열 숫자도 읽어야 한다 (GetValue<double>은 int 값에서 예외)
+        if (BmsConverter.ReadDouble(JsonValue.Create(1), -1) != 1 || BmsConverter.ReadDouble(JsonNode.Parse("2.5"), -1) != 2.5 ||
+            BmsConverter.ReadDouble(JsonValue.Create("3"), -1) != 3 || BmsConverter.ReadDouble(null, -1) != -1)
+        {
+            Console.WriteLine("   [FAIL ReadDouble] int/JsonElement/문자열/null 값 읽기");
+            failed++;
+        }
+
         // 길이 → endPosition 계산: BPM 변속 구간별 반영
         // 120BPM = 마디당 2초. 시작 위치 1에서 4초 → 위치 3.
         double flat = BmsConverter.PositionAfterSeconds(1, 4, 120, null);

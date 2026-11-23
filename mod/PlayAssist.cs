@@ -155,7 +155,8 @@ internal static class PlayAssist
         // 설정 저장은 오토 플레이와 무관하게 늘 불린다 → 게임 멤버 접근은 별도 메서드로 격리 (HookGuard 설명 참고)
         private static void Prefix(InGameSettingManager __instance) => Set(__instance, s_savedExtra);
 
-        private static void Postfix(InGameSettingManager __instance) => Set(__instance, s_autoPlayValue);
+        // Postfix는 원본 Save가 예외를 던지면 실행되지 않아 오토 플레이 값이 꺼진 채로 남는다 → 예외와 무관하게 도는 Finalizer (예외는 그대로 다시 던져진다)
+        private static void Finalizer(InGameSettingManager __instance) => Set(__instance, s_autoPlayValue);
 
         private static void Set(InGameSettingManager manager, int value)
         {
