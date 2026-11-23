@@ -243,6 +243,12 @@ internal static class BmsConverter
 
         // 레인 채널
         var lanes = laneChannels?.Where(c => c.Length == 2).Select(c => c.ToUpperInvariant()).ToList();
+        if (lanes != null && lanes.Count > 4)
+        {
+            // 게임은 4라인(FourLines) 패턴이라 key 5 이상은 유효하지 않다
+            Core.Log.Warning($"[BMS] {log}: info.txt lanes가 {lanes.Count}개 → 앞 4개만 사용");
+            lanes = lanes.Take(4).ToList();
+        }
         if (lanes == null || lanes.Count == 0)
         {
             var used = bms.Objects.Select(o => NoteChannel(o.Channel)).ToHashSet();
@@ -326,6 +332,22 @@ internal static class BmsConverter
             return cmp != 0 ? cmp : a.key.CompareTo(b.key);
         });
 
+        // 같은 위치·같은 레인·같은 끝의 노트가 겹치면 게임에서 한 노트가 두 번 판정 대상이 된다
+        // (BGM 채널에 키음을 겹쳐 쓰거나 같은 마디를 두 번 적은 BMS) → 하나만 남긴다.
+        int duplicates = 0;
+        var seenNotes = new HashSet<(double, double?, int)>();
+        var unique = new List<(double start, double? end, int key)>(notes.Count);
+        foreach (var n in notes)
+        {
+            if (seenNotes.Add((n.start, n.end, n.key))) unique.Add(n);
+            else duplicates++;
+        }
+        if (duplicates > 0)
+        {
+            Core.Log.Warning($"[BMS] {log}: 같은 위치·레인에 겹친 노트 {duplicates}개를 하나로 합쳤습니다");
+            notes = unique;
+        }
+
         var noteArray = new JsonArray();
         double last = bgmPosition;
         int holds = 0, pitches = 0;
@@ -382,6 +404,44 @@ internal static class BmsConverter
             ["endPosition"] = Math.Ceiling(last) + 1,
             ["timeTriggeredEvents"] = new JsonArray(),
         };
+    }
+
+    /// <summary>
+    /// startPos(마디 위치)에서 seconds초 뒤의 위치. 1마디 = 4박 = 240/BPM초이고, bpms(위치 → BPM) 변속을 구간별로 반영한다.
+    /// 예전에는 초기 BPM 하나로만 계산해서, 뒤쪽에서 BPM이 빨라지는 곡은 endPosition이 모자라 곡이 중간에 끝났다.
+    /// </summary>
+    internal static double PositionAfterSeconds(double startPos, double seconds, double initialBpm, JsonObject bpms)
+    {
+        var changes = new List<(double pos, double bpm)>();
+        if (bpms != null)
+        {
+            foreach (var kv in bpms)
+            {
+                // 값의 내부 형식(int/double/JsonElement)과 무관하게 읽도록 JSON 텍스트로 파싱한다 (TryGetValue<double>은 int로 만든 값에서 실패)
+                if (double.TryParse(kv.Key, NumberStyles.Float, CultureInfo.InvariantCulture, out var p) &&
+                    kv.Value is JsonValue v &&
+                    double.TryParse(v.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var b) &&
+                    b > 0 && !double.IsInfinity(b))
+                    changes.Add((p, b));
+            }
+            changes.Sort((a, c) => a.pos.CompareTo(c.pos));
+        }
+
+        double bpm = initialBpm > 0 ? initialBpm : 120;
+        int i = 0;
+        while (i < changes.Count && changes[i].pos <= startPos) bpm = changes[i++].bpm; // 시작 위치에서 이미 적용 중인 BPM
+        double pos = startPos, remaining = Math.Max(seconds, 0);
+        while (i < changes.Count)
+        {
+            double secondsPerMeasure = 240.0 / bpm;
+            double segmentSeconds = (changes[i].pos - pos) * secondsPerMeasure;
+            if (segmentSeconds >= remaining) break;
+            remaining -= segmentSeconds;
+            pos = changes[i].pos;
+            bpm = changes[i].bpm;
+            i++;
+        }
+        return pos + remaining * bpm / 240.0;
     }
 
     private const int MaxTicksPerNote = 65536;

@@ -480,9 +480,14 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 
 ## 15차 (2026-11-23): 전체 재감사 (경량)
 
-검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[Guarded]` 54·`[HarmonyPatch]` 26·`[PatchArgs]` 30·`[Required]` 10·`[Layout]` 283·`[Body]` 392·`[Reflect]` 35·`[GuardKey]`·`[Mark]`·`[Fingerprint]` 모두 실패 0). **인게임 실기 실행은 이 빌드로 미확인.**
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[Guarded]` 54·`[HarmonyPatch]` 26·`[PatchArgs]` 30·`[Required]` 10·`[Layout]` 283·`[Body]` 394·`[Reflect]` 35·`[GuardKey]`·`[Mark]`·`[Fingerprint]` 모두 실패 0). **인게임 실기 실행은 이 빌드로 미확인.**
 
 - 병목 점검: `Locate` 훅(네이티브 접두사 검사 후 할당 없이 종료), `PlayOverlay.Update`(비플레이 시 조기 반환, 틱 위치·글자는 버전 변경 시에만 갱신), `ModConfig.Load`(곡 시작 시에만, 수정 시각 비교)를 재확인 — 추가 개선점 없음.
+- 전수 감사(`mod/` 22개 파일 정독, 하네스·릴리즈 스크립트 포함) 결과:
+  - C15-2 `CustomSongs.ExtendToMediaLength`: 초기 BPM 하나로 `endPosition`을 계산해 BPM이 뒤에서 빨라지는 곡은 길이가 모자라 중간에 끝남 → `BmsConverter.PositionAfterSeconds`(구간별 반영). 회귀 테스트 추가, 첫 구현이 `JsonValue<int>`에서 `TryGetValue<double>` 실패로 하네스에 잡혀 JSON 텍스트 파싱으로 수정.
+  - C15-3 `BmsConverter.Convert`: 겹친 노트 중복 제거, 명시 `lanes` 5개 이상이면 앞 4개로 제한 (회귀 테스트 `BmsDuplicate`).
+  - C15-4 `CustomMedia.GetCover`: `File.ReadAllBytes` 예외 시 "실패 파일" 표시가 남아 파일 수정 전까지 재시도하지 않음 → 예외 때 표시 제거.
+  - 확인만 하고 고치지 않은 것: `InGameSettingManager.Save` Postfix는 원본이 예외를 던지면 실행되지 않아 오토 플레이 값이 복원되지 않을 수 있음(발생 경로 미확인, Finalizer 전환은 인게임 확인 후), `GetCover`의 동시 호출 시 일시적 null(선곡 UI는 메인 스레드라 영향 없음으로 판단).
 - C15-1 `Core.OnInitializeMelon`: 시작 로그가 `v1.1.0`으로 하드코딩돼 1.2.0 빌드와 불일치 → `Info.Version` 사용.
 - 게임 빌드는 여전히 `25981392`로 동일해 검증 기준 상수 갱신 없음.
 

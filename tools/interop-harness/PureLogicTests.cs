@@ -131,6 +131,33 @@ internal static class PureLogicTests
             Console.WriteLine($"   [FAIL BmsRandom] 채널={string.Join(",", randChannels)} (기대 11,13)");
             failed++;
         }
+
+        // 같은 위치·레인에 겹친 노트는 하나로, 4개를 넘는 명시 레인은 앞 4개만
+        var dupPath = Path.Combine(tmp, "dup.bms");
+        File.WriteAllText(dupPath, string.Join('\n',
+            "#BPM 120", "#WAV01 ShortNote.wav",
+            "#00111:01", "#00111:01", "#00112:01"));
+        var dupPpp = BmsConverter.Convert(BmsConverter.Parse(dupPath), null, new[] { "11", "12", "13", "14", "15" }, null);
+        int dupNotes = dupPpp["notes"]!.AsArray().Count;
+        if (dupNotes != 2)
+        {
+            Console.WriteLine($"   [FAIL BmsDuplicate] 노트 수={dupNotes} (기대 2)");
+            failed++;
+        }
+
+        // 길이 → endPosition 계산: BPM 변속 구간별 반영
+        // 120BPM = 마디당 2초. 시작 위치 1에서 4초 → 위치 3.
+        double flat = BmsConverter.PositionAfterSeconds(1, 4, 120, null);
+        // 위치 2에서 240BPM으로 변속: 첫 2초에 1마디(→위치 2), 남은 2초는 마디당 1초 → 위치 4
+        var change = new JsonObject { ["2"] = 240 };
+        double fast = BmsConverter.PositionAfterSeconds(1, 4, 120, change);
+        // 시작 위치(1)에서 이미 적용된 변속은 초기 BPM 대신 쓴다
+        double already = BmsConverter.PositionAfterSeconds(2, 2, 120, change);
+        if (Math.Abs(flat - 3) > 1e-9 || Math.Abs(fast - 4) > 1e-9 || Math.Abs(already - 4) > 1e-9)
+        {
+            Console.WriteLine($"   [FAIL PositionAfterSeconds] flat={flat} (기대 3) fast={fast} (기대 4) already={already} (기대 4)");
+            failed++;
+        }
         return failed;
     }
 

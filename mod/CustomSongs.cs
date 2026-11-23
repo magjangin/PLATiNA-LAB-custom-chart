@@ -874,9 +874,9 @@ internal static class CustomSongs
         double bpm = root["initialBpm"]?.GetValue<double>() ?? 120;
         if (bpm <= 0) bpm = 120;
         double bgmPos = root["bgms"]?.AsArray().FirstOrDefault()?["position"]?.GetValue<double>() ?? 1;
-        if (root["bpms"] is JsonObject bpms && bpms.Count > 0)
-            Core.Log.Warning($"[CustomSongs] {song.Id} 차트에 BPM 변속이 있어 길이 계산이 근사값입니다 (initialBpm {bpm} 기준)");
-        double needed = Math.Ceiling(bgmPos + (seconds + 1.0) * bpm / 240.0);
+        // BPM 변속은 구간별로 반영한다 (STOP·박자 변경은 반영하지 못한다)
+        var bpms = root["bpms"] as JsonObject;
+        double needed = Math.Ceiling(BmsConverter.PositionAfterSeconds(bgmPos, seconds + 1.0, bpm, bpms));
         double current = root["endPosition"]?.GetValue<double>() ?? 0;
         if (needed <= current) return;
         root["endPosition"] = needed;

@@ -332,7 +332,14 @@ internal static class CustomMedia
             EvictCoversIfFull();
         }
 
-        var bytes = File.ReadAllBytes(path);
+        byte[] bytes;
+        try { bytes = File.ReadAllBytes(path); }
+        catch
+        {
+            // 파일이 잠겼거나 잠깐 사라진 경우(편집기 저장 중 등)는 "수정 전까지 재시도 안 함" 표시를 남기지 않는다
+            lock (s_coverLock) s_failedCovers.Remove(path);
+            throw;
+        }
         var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
         tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
         if (!LoadImage(tex, bytes))
