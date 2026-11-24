@@ -36,19 +36,16 @@ internal static class InGameSurface_RequestGameStart_Patch
         CustomSongs.Current = chart;
         CustomSongs.LastStarted = chart; // 로컬 세션을 못 만들어도 커스텀 곡 결과는 서버로 보내지 않도록 기록
         PatternPlayer_DetermineRunning_HoldEnd_Patch.ResetCache(); // 같은 PatternPlayer를 다시 써도(재도전 등) 새 곡 기준으로 다시 정한다
-        if (chart == null) return true;
-        if (!ModHealth.CustomSongsAllowed || HookGuard.IsDisabled(Hook))
-        {
-            // 서버 우회가 안 되는 상태: 원본으로 넘긴다 (서버가 없는 패턴 번호를 거부하고 오류 팝업, 기록은 남지 않음)
-            CustomSongs.Current = null;
-            Core.Log.Error($"[OfflineSession] 커스텀 곡 로컬 세션을 만들 수 없는 상태라 원본 경로로 넘깁니다 (pattern {patternId})");
-            return true;
-        }
+        if (HookGuard.IsDisabled(Hook)) return true;
+
         try
         {
-            chart.Song.RefreshMedia(); // 곡 폴더 파일을 바꿨으면 이번 플레이부터 반영
+            if (chart != null)
+            {
+                chart.Song.RefreshMedia(); // 곡 폴더 파일을 바꿨으면 이번 플레이부터 반영
+            }
             __result = StartLocal(chart);
-            Core.Log.Msg($"[OfflineSession] RequestGameStart({patternId}) 서버 호출 생략, 로컬 세션 발급");
+            Core.Log.Msg($"[OfflineSession] RequestGameStart({patternId}) 로컬 세션 발급 ({(chart != null ? "커스텀" : "공식")})");
             return false;
         }
         catch (Exception e)
@@ -66,7 +63,7 @@ internal static class InGameSurface_RequestGameStart_Patch
         if (!UpdateResilience.SafeSetFieldOrProperty(session, "Token", OfflineSession.Token))
             Core.Log.Warning("[OfflineSession] 세션 Token 설정 실패: RenewGameSession이 서버로 갈 수 있음");
         var result = new UniTask<SurfaceResult<GameSessionResult>>(SurfaceResult<GameSessionResult>.Success(session));
-        ModHealth.BeginPlay(chart.Song);
+        if (chart != null) ModHealth.BeginPlay(chart.Song);
         return result;
     }
 }
@@ -78,7 +75,7 @@ internal static class InGameSurface_RenewGameSession_Patch
 
     private static bool Prefix(string gameToken, ref UniTask<SurfaceResult> __result)
     {
-        if (gameToken != OfflineSession.Token || HookGuard.IsDisabled(Hook)) return true;
+        if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = RenewLocal();
@@ -106,21 +103,7 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// </summary>
     private static bool Prefix(GameEndResult request, PatternInfo patternInfo, ref UniTask<SurfaceResult<FreeModePlayRecordV2>> __result)
     {
-        // 패턴 번호를 못 읽으면 커스텀인지 모른다 → 방금 시작한 곡이 커스텀이었다면 서버로 보내지 않는다.
-        // Current는 PlayDirector.Exit 등 정리에서 먼저 지워질 수 있어(호출 순서 미실측) 지우지 않는 LastStarted로 판정한다.
-        // 한 번 꺼진 뒤에는 IsCustom을 다시 시도하지 않아 일반 곡 결과 전송마다 예외가 반복되지 않는다.
-        bool custom;
-        if (HookGuard.IsDisabled(Hook)) custom = CustomSongs.LastStarted != null;
-        else
-        {
-            try { custom = CustomSongs.IsCustom(patternInfo); }
-            catch (Exception e)
-            {
-                HookGuard.Fail(Hook, e, required: true);
-                custom = CustomSongs.LastStarted != null;
-            }
-        }
-        if (!custom) return true;
+        if (HookGuard.IsDisabled(Hook)) return true;
 
         try
         {

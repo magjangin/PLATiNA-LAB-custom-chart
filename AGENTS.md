@@ -59,8 +59,11 @@
 - `PatternPlayer.DetermineRunning()`: 커스텀 곡 클리어 연출 타이밍 보류.
 - `SongListBuilder.BuildNameBanners()` / `CategoryCacheFactory.CreateAll()`: 커스텀 곡·카테고리 주입.
 - `SongInfo.IsHiddenFromDefaultList` / `IsAvailable` / `IsNotOwned` / `IsLock` / `IsNewSongMarkTarget`: 커스텀 곡 잠금/보유 우회.
-- `InGameSurface.RequestGameStart` / `RenewGameSession` / `SendGameEnd`: 커스텀 곡 오프라인 세션.
+- `InGameSurface.RequestGameStart` / `RenewGameSession` / `SendGameEnd`: 전곡(커스텀 곡 + 공식 곡) 오프라인 세션 및 로컬 결과 생성 (`mod/OfflineSession.cs`).
+- `StoryManager.IsPrologueFirstHalfRead` / `IsPrologueSecondHalfRead` / `IsStoryRead` & `TitleDirector.LoadPrologueScene` & `TutorialLauncher.Enter` & `StorySequenceDirector.AskTutorialAndProceed` / `LoadTutorialScene`: 프롤로그 스토리 및 튜토리얼 스킵 (`mod/SteamBypassPatches.cs`).
 - `CoverManager.GetCoverSprite` / `SoundData.FromHEAudioClip` / `BGAPlayer.SetClip`: 커스텀 미디어.
+- `SteamAPI.Init` / `InitEx` / `RestartAppIfNecessary` / `IsSteamRunning` / `RunCallbacks` & `SteamUser.GetSteamID` / `BLoggedOn` / `GetAuthTicketForWebApi` & `InteropHelp.TestIfAvailableClient` & `Platform.PlatformUserId` / `GetAuthToken` & `LoginProcedure.LoginAndLoadProfile` & `LoginInitialize.Init` & `LoginSurface.LoginSteam` & `UserSurface.GetUserProfile` / `GetUnlockedFeatures` & `ContentsSurface.GetContentsAvailability` & `RewardManager.Load` / `FetchAllUnlockStates` & `PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI` & `SocialSurface.GetScoreRecordsOfFocusedUsers` / `GetFollowingList` & `Application.Quit` & `HttpRequestInterceptor.IsCriticalError` / `HandleCriticalError` & `ErrorDialogCollection.FatalAPIServerError` / `APIServerError` / `ShowErrorForCode` / `ShowNotLoggedInDialogAndRestart` / `ShowMaintenanceDialogAndQuit` (`mod/SteamBypassPatches.cs`): 오프라인 독립 사본을 위한 스팀 SDK, 로그인 인증(`LoginResultType.Success` + `RuntimeDatabase` 오프라인 프로필 구성), 카탈로그/기능 해금 및 보상 로딩 더미 완료 반환, 소셜/친구 랭킹 보드 더미 빈 데이터 반환 및 임의 종료(`Application.Quit`) 차단, 가짜 `LoginOutcome`/`UserProfile` 반환, HTTP 치명적 에러 및 미로그인/서버 다이얼로그 차단 우회.
+- `AiringCurtainController.Leave` / `FadingCurtainController.Leave` & `SongSelectDirector.Awake` / `OnSceneVisible` & `DetailViewerManager.SetSong` & `SectionController.Initialize` (`mod/CurtainBypassPatches.cs`): 씬 전환 시 닫힌 ACCESSING.. 아이캐치 커튼이 열리지 않고 멈추는 현상 해소, 선곡 화면 진입 및 곡 변경 시 잔류 커튼 즉시 비활성화(`SetActive(false)`), 커스텀 곡의 섹션 캐시 미등록 에러 방어.
 
 ---
 
@@ -77,7 +80,8 @@
 - **`UpdateResilience` 백킹 폴백을 `Type.GetField`로만 찾기 (1~10차):** Il2CppInterop은 IL2CPP 필드를 관리 필드가 아니라 같은 이름의 **프로퍼티**(`SongInfo._Id_k__BackingField` 등)로 노출해서, 인터롭 타입에서는 폴백 35개 호출부 중 고유 이름 17개가 한 번도 찾히지 않았다(11차 실측). → 후보 이름을 필드 → 프로퍼티 순으로 탐색.
 - **`SendGameEnd` 폴백 판정에 `CustomSongs.Current` 사용 (1~11차):** `Current`는 `PlayDirector.Exit`·선곡 복귀에서 지워지는데 `SendGameEnd`와의 호출 순서를 실측하지 못했다 → 지우지 않는 `CustomSongs.LastStarted`(최근 `RequestGameStart`의 곡)로 판정.
 - **`record`/`record struct` 및 일부 LINQ 람다:** `CS0656(NullableAttribute)` 발생 시 일반 클래스/`foreach`로 대체.
-- **게임 exe 직접 실행:** Steam SDK 초기화 실패 종료 → `steam://run/3430470//-screen-fullscreen 0 -screen-width 1600 -screen-height 900/` 사용.
+- **구버전 골드버그(0.2.5) steam_api64.dll 직접 교체:** 최신 Steamworks.NET이 호출하는 `SteamInternal_SteamAPI_Init` 함수 누락으로 `EntryPointNotFoundException` 크래시 발생 → 원본 `steam_api64.dll` 복원 후 모드 Harmony 패치(`SteamBypassPatches.cs`)로 C# 수준에서 `SteamAPI.Init`/`InitEx`를 가로채는 방식으로 해결.
+- **게임 exe 직접 실행:** 과거 Steam SDK 초기화 실패 종료 → 모드 내 `SteamBypassPatches` 적용 후 스팀 없이 독립 사본 직접 실행 가능.
 - **사용자 PC 사용 중 자동 입력:** `um win drive ... idle` 1분 미만이면 입력 보내지 않음.
 
 ---

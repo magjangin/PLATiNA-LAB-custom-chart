@@ -93,6 +93,18 @@
       <HintPath>$(Il2CppAssemblies)\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="Il2Cppcom.rlabrecque.steamworks.net">
+      <HintPath>$(Il2CppAssemblies)\Il2Cppcom.rlabrecque.steamworks.net.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppHighendGames.GamePlatform.Steam">
+      <HintPath>$(Il2CppAssemblies)\Il2CppHighendGames.GamePlatform.Steam.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Il2CppHighendGames.GamePlatform">
+      <HintPath>$(Il2CppAssemblies)\Il2CppHighendGames.GamePlatform.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Auto deploy to Mods folder on build -->

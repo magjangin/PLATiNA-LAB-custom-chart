@@ -55,9 +55,8 @@ internal static class PatternInfo_GetPatternFileName_Patch
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsAvailable))]
 internal static class SongInfo_IsAvailable_Patch
 {
-    private static bool Prefix(SongInfo __instance, ref bool __result)
+    private static bool Prefix(ref bool __result)
     {
-        if (!CustomSongs.IsCustomSong(__instance)) return true;
         __result = true;
         return false;
     }
@@ -66,9 +65,8 @@ internal static class SongInfo_IsAvailable_Patch
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsNotOwned))]
 internal static class SongInfo_IsNotOwned_Patch
 {
-    private static bool Prefix(SongInfo __instance, ref bool __result)
+    private static bool Prefix(ref bool __result)
     {
-        if (!CustomSongs.IsCustomSong(__instance)) return true;
         __result = false;
         return false;
     }
@@ -77,9 +75,9 @@ internal static class SongInfo_IsNotOwned_Patch
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsLock))]
 internal static class SongInfo_IsLock_Patch
 {
-    private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
+    private static bool Prefix(ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
     {
-        if (HookGuard.IsDisabled("EncryptedBool") || !CustomSongs.IsCustomSong(__instance)) return true;
+        if (HookGuard.IsDisabled("EncryptedBool")) return true;
         try { __result = CustomSongs.EncryptedFalse(); }
         catch (Exception e)
         {
@@ -93,9 +91,9 @@ internal static class SongInfo_IsLock_Patch
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsNewSongMarkTarget))]
 internal static class SongInfo_IsNewSongMarkTarget_Patch
 {
-    private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
+    private static bool Prefix(ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
     {
-        if (HookGuard.IsDisabled("EncryptedBool") || !CustomSongs.IsCustomSong(__instance)) return true;
+        if (HookGuard.IsDisabled("EncryptedBool")) return true;
         try { __result = CustomSongs.EncryptedFalse(); }
         catch (Exception e)
         {
