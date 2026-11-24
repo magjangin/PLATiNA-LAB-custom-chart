@@ -509,6 +509,17 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - 확인만 하고 고치지 않은 것: 미리듣기 음원을 메인 스레드에서 `File.ReadAllBytes`로 읽는 비용(파일당 1회, LRU 8개 캐시 — 큰 WAV는 선곡 시 짧은 멈춤이 있을 수 있음. 비동기화는 HEAudio 쪽 스레드 안전성을 실기로 확인한 뒤), BMS 변환 캐시 스탬프에 `info.txt`(lanes)가 빠진 것(`info.txt`는 시작 시 한 번만 읽으므로 재시작 필요 — 기존 동작과 같음).
 - 검증: 빌드·하네스는 게임 PC에서 실행(결과는 아래 확인 항목·커밋 메시지 참고). **인게임 실기는 이 빌드로 미확인.**
 
+## 18차 (2026-11-24): v1.3.0 게임 PC 빌드·하네스 실측 검증 + 경계값 보강
+
+검증: Release/Debug 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[SafePatch]` 포함 전 항목 통과). **인게임 실기 실행은 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C18-1 | `PlayOverlay.Build` | 17차에서 추가한 관리 플래그 `s_labelShown = false`와 달리 `NewText` 직후 `TextMeshProUGUI.enabled`는 기본 `true`라 첫 판정 전 초기 상태가 어긋남 | `Build()`에서 `s_label.enabled = false; s_labelShadow.enabled = false;` 명시 초기화 |
+| C18-2 | `MediaDuration.ReadWav` | WAV 파일에서 `data` 청크가 `fmt `보다 먼저 나오면 `byteRate == 0`으로 즉시 `null` 반환, `fmt ` 청크 끝 경계 미검사 | `byteRate`·`dataLen`을 독립 기록해 순서 무관하게 둘 다 확보되면 계산, `body + 16 <= len` 검사 + 회귀 테스트(`data`-first WAV) 추가 |
+| C18-3 | `BmsConverter.Parse` | `#SETRANDOM n`의 지정 분기 값 `n`을 무시하고 항상 1 고정, 디렉티브가 `StartsWith`라 접두사가 겹치는 비표준 헤더 오인 가능, `headerOnly` 스캔 시 `#RANDOM` 경고 중복 출력 | `#SETRANDOM n` 분기 값 반영, 공백/탭/줄끝 경계 검사(`IsDirective`), `headerOnly` 경고 생략 + 회귀 테스트(`BmsSetRandom`) 추가 |
+| U18-1 | `SafePatcher.cs` | 17차 클라우드 커밋(`4d32c8c`)에 `using MelonLoader;`가 빠져 `[assembly: HarmonyDontPatchAll]` 컴파일 오류(CS0246), `ApplyAll` 중복 호출 가드 없음 | `using MelonLoader;` 추가, `s_applied` 가드 및 `harmony`/`assembly` null 방어 추가 |
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

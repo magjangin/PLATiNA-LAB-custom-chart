@@ -336,6 +336,39 @@ internal static class PureLogicTests
             Console.WriteLine($"   [FAIL MediaDuration.Audio] WAV {wavSec} (기대 2.0)");
             failed++;
         }
+        // 2-d) WAV data 청크가 fmt 청크보다 앞에 와도(표준 허용) 길이를 읽어야 한다
+        var wavDataFirstPath = Path.Combine(tmp, "test_data_first.wav");
+        var wavDf = new byte[12 + 8 + 352800 + 24];
+        Encoding.ASCII.GetBytes("RIFF").CopyTo(wavDf, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(wavDf.AsSpan(4, 4), (uint)(wavDf.Length - 8));
+        Encoding.ASCII.GetBytes("WAVE").CopyTo(wavDf, 8);
+        Encoding.ASCII.GetBytes("data").CopyTo(wavDf, 12);
+        BinaryPrimitives.WriteUInt32LittleEndian(wavDf.AsSpan(16, 4), 352800);
+        int fmtOff = 12 + 8 + 352800;
+        Encoding.ASCII.GetBytes("fmt ").CopyTo(wavDf, fmtOff);
+        BinaryPrimitives.WriteUInt32LittleEndian(wavDf.AsSpan(fmtOff + 4, 4), 16);
+        BinaryPrimitives.WriteUInt16LittleEndian(wavDf.AsSpan(fmtOff + 8, 2), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(wavDf.AsSpan(fmtOff + 10, 2), 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(wavDf.AsSpan(fmtOff + 12, 4), 44100);
+        BinaryPrimitives.WriteUInt32LittleEndian(wavDf.AsSpan(fmtOff + 16, 4), 176400);
+        BinaryPrimitives.WriteUInt16LittleEndian(wavDf.AsSpan(fmtOff + 20, 2), 4);
+        BinaryPrimitives.WriteUInt16LittleEndian(wavDf.AsSpan(fmtOff + 22, 2), 16);
+        File.WriteAllBytes(wavDataFirstPath, wavDf);
+        var wavDfSec = MediaDuration.Audio(wavDataFirstPath);
+        if (wavDfSec == null || Math.Abs(wavDfSec.Value - 2.0) > 0.001)
+        {
+            Console.WriteLine($"   [FAIL MediaDuration.Audio] WAV data-first {wavDfSec} (기대 2.0)");
+            failed++;
+        }
+        // 2-e) BMS #SETRANDOM 2는 2번 분기를 선택해야 한다
+        var setRndPath = Path.Combine(tmp, "setrandom.bms");
+        File.WriteAllText(setRndPath, "#BPM 120\n#WAV01 ShortNote.wav\n#SETRANDOM 2\n#IF 1\n#00111:0100\n#ELSEIF 2\n#00211:0100\n#ENDIF\n");
+        var setRnd = BmsConverter.Parse(setRndPath);
+        if (setRnd.Objects.Count != 1 || setRnd.Objects[0].Measure != 2)
+        {
+            Console.WriteLine($"   [FAIL BmsSetRandom] count={setRnd.Objects.Count}, measure={(setRnd.Objects.Count > 0 ? setRnd.Objects[0].Measure : -1)} (기대 1, 2)");
+            failed++;
+        }
         var oggAudioSec = MediaDuration.Audio(oggPath);
         if (oggAudioSec == null || Math.Abs(oggAudioSec.Value - 2.0) > 0.001)
         {

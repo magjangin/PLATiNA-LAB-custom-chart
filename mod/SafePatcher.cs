@@ -1,5 +1,6 @@
 using System.Reflection;
 using HarmonyLib;
+using MelonLoader;
 
 // MelonLoader의 자동 PatchAll을 끈다. 자동 PatchAll은 패치 클래스를 차례로 적용하다가 하나라도 예외가 나면
 // (게임 업데이트로 대상 메서드가 사라짐·오버로드가 생겨 모호해짐·인자 이름 변경) 그 뒤 클래스를 전부 건너뛴다.
@@ -17,9 +18,12 @@ internal static class SafePatcher
     public static int Applied { get; private set; }
     public static IReadOnlyList<string> Failed => s_failed;
     private static readonly List<string> s_failed = new();
+    private static bool s_applied;
 
     public static void ApplyAll(HarmonyLib.Harmony harmony, Assembly assembly)
     {
+        if (s_applied || harmony == null || assembly == null) return;
+        s_applied = true;
         int applied = 0;
         foreach (var type in InteropNames.SafeGetTypes(assembly))
         {

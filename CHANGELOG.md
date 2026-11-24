@@ -13,6 +13,7 @@
 
 ### 수정
 - 곡 폴더의 `music.wav`(`audio.wav`·`song.wav`·`bgm.wav`·`音乐.wav`·`音频.wav`)를 찾지 못해 기반 곡 음원이 나오던 문제. WAV 재생·길이 읽기는 이미 지원했지만 파일 탐색 목록에 `.ogg`만 있었다. 같은 이름이면 `.ogg`가 우선.
+- `MediaDuration.ReadWav`에서 `data` 청크가 `fmt ` 청크보다 먼저 오는 WAV도 길이를 읽도록 보강, BMS `#SETRANDOM n` 분기 값 반영 및 `PlayOverlay` 초기 라벨 `enabled` 상태 동기화 (18차).
 
 ### 성능
 - 판정바·키뷰어: 매 프레임 틱(최대 32개)마다 부르던 `Mathf.*`, `new Color/Rect/Vector2`, `Rect.x` 같은 Unity 값 형식 헬퍼(전부 `il2cpp_runtime_invoke`)를 `MathF`·필드 직접 대입으로 바꿨다. `Image.enabled` 게터와 오버레이 `== null`·`Screen.width/height`도 매 프레임 대신 관리 플래그와 30프레임 간격 확인으로 줄였다. 모양 스프라이트(알약·다이아몬드) 생성도 픽셀마다 IL2CPP 호출을 하지 않는다.

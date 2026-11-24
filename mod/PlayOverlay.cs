@@ -190,6 +190,9 @@ internal static class PlayOverlay
         s_center = NewImage(s_barGroup, "Center");
         s_labelShadow = NewText(s_barGroup, "LabelShadow", 16);
         s_label = NewText(s_barGroup, "Label", 16);
+        // AddComponent<TextMeshProUGUI>는 기본 enabled=true → 관리 플래그(s_labelShown=false)와 일치시킨다
+        s_labelShadow.enabled = false;
+        s_label.enabled = false;
         Core.Log.Msg("[PlayOverlay] 오버레이 생성 (uGUI)");
     }
 
