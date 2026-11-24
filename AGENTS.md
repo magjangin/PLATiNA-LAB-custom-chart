@@ -94,7 +94,7 @@
   (다른 경로에 게임이 있으면 `-p:GameRoot="C:\...\PLATiNA LAB"` 지정)
 - **배포 경로:** `PostBuild`가 `$(GameRoot)\Mods\PLATiNALAB.Mod.dll`로 자동 복사 (게임 실행 중 잠김 시 경고 후 계속).
 - **오프라인 하네스:** `dotnet run --project "H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness" -c Release`
-- **릴리즈 배포 (v1.2.0부터):** `Core.cs`의 `MelonInfo` 버전과 `CHANGELOG.md`를 갱신·커밋한 뒤 `tools\release.ps1`(검증 + `dist\` zip) → `tools\release.ps1 -Publish`(태그 `v<버전>` + `gh release create`). 하네스 종료 코드 0이 아니면 중단한다. zip에는 DLL·README·CHANGELOG만 넣고 게임 파일·디컴파일 코드는 넣지 않는다. 게임을 업데이트해 재검증하면 `TestedBuildId`·`TestedGameAssemblySize`와 README·CHANGELOG의 검증 기준 빌드를 함께 갱신한다.
+- **릴리즈 배포 (v1.2.0부터):** `Core.cs`의 `MelonInfo` 버전과 `CHANGELOG.md`를 갱신·커밋한 뒤 `tools\release.ps1`(검증) → `tools\release.ps1 -Publish`(태그 `v<버전>` + `gh release create`로 `PLATiNALAB.Mod.dll` 직접 업로드). 하네스 종료 코드 0이 아니면 중단한다. 릴리즈 에셋에는 순수 모드 DLL만 올리고 게임 파일·디컴파일 코드는 넣지 않는다. 게임을 업데이트해 재검증하면 `TestedBuildId`·`TestedGameAssemblySize`와 README·CHANGELOG의 검증 기준 빌드를 함께 갱신한다.
 - **Git 원격:** `origin` = https://github.com/magjangin/PLATiNA-LAB-custom-chart (public), `local` = `H:\local-repos\PLATiNA LAB-unity-il2cpp.git` (로컬 백업). `dummy_dll/`, `src_dummy/`, `slices/`, `logs/`, `.reatool/`, `mod/bin|obj`는 `.gitignore`로 제외.
 
 ---
