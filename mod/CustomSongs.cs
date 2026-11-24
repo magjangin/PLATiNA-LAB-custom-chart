@@ -8,7 +8,7 @@ namespace PLATiNALAB.Mod;
 
 /// <summary>
 /// hwa\ 폴더의 곡 폴더 하나 = 커스텀 곡 하나.
-/// info.txt(메타), chart_{난이도}.json 또는 chart.json(PPP 차트), music.ogg(미리듣기+BGM), video.mp4(BGA), 썸네일.png(커버).
+/// info.txt(메타), chart_{난이도}.json 또는 chart.json(PPP 차트), music.ogg/music.wav(미리듣기+BGM), video.mp4(BGA), 썸네일.png(커버).
 /// </summary>
 internal sealed class CustomSong
 {
@@ -24,7 +24,13 @@ internal sealed class CustomSong
     public readonly List<CustomChart> Charts = new();
 
     private static readonly char[] KeyValueSeparators = { ':', '=' };
-    private static readonly string[] MusicNames = { "music.ogg", "audio.ogg", "song.ogg", "bgm.ogg", "音乐.ogg", "音频.ogg" };
+    // WAV도 재생·길이 읽기를 지원하므로(CustomMedia.CreateAudioClip·MediaDuration.Audio가 RIFF 헤더로 판별) 같은 이름의 .wav도 찾는다.
+    // 예전에는 .ogg만 찾아서 music.wav는 무시되고 기반 곡 음원이 나왔다. 같은 이름이면 .ogg가 우선.
+    private static readonly string[] MusicNames =
+    {
+        "music.ogg", "audio.ogg", "song.ogg", "bgm.ogg", "音乐.ogg", "音频.ogg",
+        "music.wav", "audio.wav", "song.wav", "bgm.wav", "音乐.wav", "音频.wav",
+    };
     private static readonly string[] VideoNames = { "video.mp4", "bga.mp4", "bg.mp4", "视频.mp4", "背景.mp4" };
     private static readonly string[] ThumbnailNames =
     {

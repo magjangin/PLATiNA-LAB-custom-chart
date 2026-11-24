@@ -500,11 +500,31 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - C16-5 `PlayAssist.InGameSettingManager_Save_Patch`: 15차에 "확인만" 했던 Postfix 미실행 문제를 Finalizer로 전환 (반환형 void, `__exception` 없음 → 원본 예외는 그대로 다시 던져진다).
 - 병목: 새 코드는 차트 변환(플레이당 1회)에만 있고 핫패스 변경 없음.
 
+## 17차 (2026-11-23): 전체 재감사 → v1.3.0
+
+- C17-1 `Core`/`SafePatcher` (**업데이트 내성, 가장 큰 구멍**): 이 모드만 MelonLoader 자동 `PatchAll`에 의존하고 있었다. Harmony `PatchAll`은 패치 클래스를 차례로 처리하다 하나라도 예외(대상 삭제·오버로드 추가로 모호·인자 이름 변경)가 나면 뒤 클래스를 전부 건너뛴다. 그러면 `ModHealth`가 필수 패치 누락으로 커스텀 곡을 통째로 끄거나, 필수가 아닌 기능(판정바·오토 플레이 등)이 조용히 사라졌다. 문자열 대상 훅(`PlayDirector "Awake"/"OnDestroy"`, `PatternPlayer "ProcessInputEvent"`)은 컴파일 오류로도 드러나지 않는다. → `[assembly: HarmonyDontPatchAll]` + `SafePatcher.ApplyAll`(클래스 단위 try/catch, 형제 모드 sxtg2-update·DEFLATE·PUMP·muse-dash와 같은 방식). 하네스 `[SafePatch]`가 되돌림을 막는다.
+- C17-2 `CustomSong.MusicNames`: WAV는 재생(`CreateAudioClip` RIFF 판별)·길이(`MediaDuration.Audio`) 모두 지원하는데 탐색 목록이 `.ogg`뿐이라 `music.wav`가 무시되고 기반 곡 음원이 나왔다. README도 WAV 지원으로 안내하고 있었다 → `.wav` 이름 추가(`.ogg` 우선).
+- C17-3 `PlayOverlay` 병목: 인터롭의 `Mathf.*`, `Color`/`Rect`/`Vector2` 생성자, `Rect.x` 등 프로퍼티, `Color.white`는 관리 코드가 아니라 `il2cpp_runtime_invoke`다. 판정바는 틱(최대 32)마다 매 프레임 `Mathf.Clamp01`·`new Color`·`Image.enabled` 게터를 불렀고, `Update`는 매 프레임 `Screen.width/height`·`s_root == null`을 읽었다 → `Rgba`/`Vec2`/`Box`(필드 직접 대입), `MathF`, 관리 플래그(`s_built`·`s_tickEnabled`·`s_labelShown`), 30프레임 간격 재확인. 모양 스프라이트 생성(픽셀마다 `Mathf`+`new Color`, 300×24면 수만 번)도 관리 코드로.
+- C17-4 기타 핫패스: `GetDataSet` Postfix가 모든 카테고리 키에서 `__instance == null`(Unity 비교)을 먼저 하던 것을 키 비교 뒤로, `SoundData.FromHEAudioClip`(효과음마다)·`DetermineRunning` 해제(매 프레임)의 `== null`을 `is null`로. `BuildNameBanners` 로그는 `DiagnosticLogs=1`일 때만.
+- 확인만 하고 고치지 않은 것: 미리듣기 음원을 메인 스레드에서 `File.ReadAllBytes`로 읽는 비용(파일당 1회, LRU 8개 캐시 — 큰 WAV는 선곡 시 짧은 멈춤이 있을 수 있음. 비동기화는 HEAudio 쪽 스레드 안전성을 실기로 확인한 뒤), BMS 변환 캐시 스탬프에 `info.txt`(lanes)가 빠진 것(`info.txt`는 시작 시 한 번만 읽으므로 재시작 필요 — 기존 동작과 같음).
+- 검증: 빌드·하네스는 게임 PC에서 실행(결과는 아래 확인 항목·커밋 메시지 참고). **인게임 실기는 이 빌드로 미확인.**
+
+## 18차 (2026-11-24): v1.3.0 게임 PC 빌드·하네스 실측 검증 + 경계값 보강
+
+검증: Release/Debug 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[SafePatch]` 포함 전 항목 통과). **인게임 실기 실행은 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C18-1 | `PlayOverlay.Build` | 17차에서 추가한 관리 플래그 `s_labelShown = false`와 달리 `NewText` 직후 `TextMeshProUGUI.enabled`는 기본 `true`라 첫 판정 전 초기 상태가 어긋남 | `Build()`에서 `s_label.enabled = false; s_labelShadow.enabled = false;` 명시 초기화 |
+| C18-2 | `MediaDuration.ReadWav` | WAV 파일에서 `data` 청크가 `fmt `보다 먼저 나오면 `byteRate == 0`으로 즉시 `null` 반환, `fmt ` 청크 끝 경계 미검사 | `byteRate`·`dataLen`을 독립 기록해 순서 무관하게 둘 다 확보되면 계산, `body + 16 <= len` 검사 + 회귀 테스트(`data`-first WAV) 추가 |
+| C18-3 | `BmsConverter.Parse` | `#SETRANDOM n`의 지정 분기 값 `n`을 무시하고 항상 1 고정, 디렉티브가 `StartsWith`라 접두사가 겹치는 비표준 헤더 오인 가능, `headerOnly` 스캔 시 `#RANDOM` 경고 중복 출력 | `#SETRANDOM n` 분기 값 반영, 공백/탭/줄끝 경계 검사(`IsDirective`), `headerOnly` 경고 생략 + 회귀 테스트(`BmsSetRandom`) 추가 |
+| U18-1 | `SafePatcher.cs` | 17차 클라우드 커밋(`4d32c8c`)에 `using MelonLoader;`가 빠져 `[assembly: HarmonyDontPatchAll]` 컴파일 오류(CS0246), `ApplyAll` 중복 호출 가드 없음 | `using MelonLoader;` 추가, `s_applied` 가드 및 `harmony`/`assembly` null 방어 추가 |
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
-3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `Failed to HarmonyInit PatchAll`도 검색한다.
+3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `[SafePatcher] … 적용 실패`(17차부터 자동 PatchAll 대신 클래스 단위 적용 — 실패한 클래스 이름이 그대로 나온다)도 검색한다.
    - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요, 종료 코드 0이면 통과): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT·`[HarmonyPatch]` 타깃·`[Required]` 실패 0, `[Layout]`·`[Body]`·`[Diag]`·`[NativeField]` 실패 0, `[Reflect]`(리플렉션 폴백 이름이 새 인터롭에서도 찾히는지)·`[GuardKey]` 실패 0을 확인한다. `[Reflect]` 실패는 "직접 경로가 깨졌을 때 받쳐 줄 폴백도 깨졌다"는 뜻이므로 직접 경로가 아직 정상이어도 이름을 고친다. 업데이트로 게임 enum이 struct가 되거나 record가 아니게 되는 등 "재빌드 없이 돌던 모드가 클래스째 깨지는" 변화는 `[Layout]`·`[Body]`가 새 인터롭 기준으로 다시 잡는다.
 4. 검증 기준 빌드를 `ModHealth.TestedBuildId`와 `TestedGameAssemblySize`(= `GameAssembly.dll` 바이트 수)에 갱신한다 (Locate 건수가 바뀌었으면 `TestedLocateCount`도). 하네스 `[Fingerprint]`가 갱신할 값을 출력하고, 갱신 전에는 실패한다. 필수 패치 목록(`s_requiredPatches`)을 바꿨다면 하네스 `[Required]`가 통과하는지도 본다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.

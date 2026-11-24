@@ -10,7 +10,7 @@
 
 - **CUSTOM 카테고리** — 선곡 화면에 파란 `CUSTOM` 탭을 추가합니다.
 - **폴더 기반 커스텀 곡** — `hwa\<곡폴더>\`마다 곡 하나. 제목·아티스트·BPM·난이도·레벨을 `info.txt`로 지정합니다.
-- **미디어 교체** — 커버 이미지, 미리듣기·인게임 BGM(`music.ogg`), BGA(`video.mp4`)를 교체합니다.
+- **미디어 교체** — 커버 이미지, 미리듣기·인게임 BGM(`music.ogg`/`music.wav`), BGA(`video.mp4`)를 교체합니다.
 - **곡 길이 자동 맞춤** — 음원/영상 길이를 읽어 차트 끝 위치를 늘려서, 곡이 끝까지 재생된 뒤 결과 화면으로 넘어갑니다.
 - **오프라인 세션** — 게임 시작·종료 서버 요청을 로컬 처리해서 결과 화면까지 정상 진행됩니다.
 - **기존 곡 차트 덮어쓰기** — 원본 차트를 JSON으로 덤프하고, 수정한 JSON으로 교체할 수 있습니다(핫리로드).
@@ -40,7 +40,7 @@
 
 | 항목 | 지원 | 제한 |
 | --- | --- | --- |
-| 음원 | `music.ogg`(Ogg Vorbis), WAV | 길이를 읽을 수 있어야 곡이 끝까지 재생됩니다. Opus·MP3는 길이를 못 읽어 곡이 중간에 끝날 수 있고, 경고 로그가 남습니다. |
+| 음원 | `music.ogg`(Ogg Vorbis) 또는 `music.wav` | 길이를 읽을 수 있어야 곡이 끝까지 재생됩니다. Opus·MP3는 길이를 못 읽어 곡이 중간에 끝날 수 있고, 경고 로그가 남습니다. |
 | 영상(BGA) | `video.mp4` | `moov`가 읽히는 일반 MP4. 길이 미정(fragmented) MP4는 길이를 못 읽습니다. |
 | 커버 | PNG, JPG | — |
 | 차트 | PPP JSON, BMS(`.bms/.bme/.bml/.pms`) | BMS의 박자 변경(`#mmm02`)·STOP은 미지원(4/4로 변환). `#RANDOM`/`#IF`/`#ELSE`는 항상 1번 분기만 변환. |
@@ -68,7 +68,7 @@ PLATiNA LAB\
       ├─ info.txt          곡 정보 (필수)
       ├─ chart_easy.json   난이도별 차트 (없으면 템플릿 자동 생성)
       ├─ chart_hard.json
-      ├─ music.ogg         BGM / 미리듣기 (audio.ogg, 音乐.ogg 도 가능)
+      ├─ music.ogg         BGM / 미리듣기 (audio.ogg, 音乐.ogg, music.wav 등도 가능. 같은 이름이면 .ogg 우선)
       ├─ video.mp4         BGA (bga.mp4, 视频.mp4 도 가능)
       └─ cover.png         커버 (thumbnail.png, 封面.png, 曲绘.png 도 가능)
 ```

@@ -82,6 +82,25 @@ internal static class PlayOverlay
     private static int[] s_keyDrawn = Array.Empty<int>(); // 칸별로 마지막에 그린 상태 (-1 = 미정, 0 = 뗌, 1 = 누름)
     private const int MaxPending = 256;
 
+    // ---------------- IL2CPP 호출 줄이기 (17차 감사) ----------------
+    // 인터롭의 Unity 값 형식 헬퍼(new Color/Rect/Vector2 생성자, Rect.x 같은 프로퍼티, Mathf.*, Color.white)와
+    // UnityEngine.Object의 == null은 관리 코드가 아니라 il2cpp_runtime_invoke다. 판정바는 틱(최대 32개)마다 매 프레임 이것들을 불렀다.
+    // → 색·좌표는 필드를 직접 채우고(Rgba/Vec2/Box), 수학은 MathF, 생존·화면 크기 확인은 RecheckFrames마다 한 번만 한다.
+    private struct Box
+    {
+        public float X, Y, W, H;
+        public Box(float x, float y, float w, float h) { X = x; Y = y; W = w; H = h; }
+    }
+    private static Color Rgba(float r, float g, float b, float a) => new() { r = r, g = g, b = b, a = a };
+    private static Vector2 Vec2(float x, float y) => new() { x = x, y = y };
+    private static float Clamp01(float v) => v < 0f ? 0f : v > 1f ? 1f : v;
+    private static readonly Color White = Rgba(1f, 1f, 1f, 1f);
+    private const int RecheckFrames = 30;
+    private static int s_frame;
+    private static bool s_built;                          // s_root를 만들었는지 (관리 플래그, 매 프레임 Unity == null 대신)
+    private static readonly List<bool> s_tickEnabled = new(); // 틱 Image.enabled를 관리 쪽에서 기억 (게터도 IL2CPP 호출)
+    private static bool s_labelShown;
+
     public static void Reset()
     {
         lock (s_lock) { s_pending.Clear(); s_history.Clear(); s_last = null; }
@@ -120,9 +139,16 @@ internal static class PlayOverlay
             bool showAny = showBar || showKeys;
             // 비플레이 화면에서는 Unity Object == null 판정(IL2CPP 호출)조차 생략한다
             if (!showAny && !s_rootActive) return;
-            s_screenW = Screen.width;
-            s_screenH = Screen.height;
-            if (s_root == null)
+            // 화면 크기와 오버레이 생존 여부는 처음과 RecheckFrames마다만 다시 읽는다 (둘 다 IL2CPP 호출)
+            bool recheck = !s_built || ++s_frame >= RecheckFrames;
+            if (recheck)
+            {
+                s_frame = 0;
+                s_screenW = Screen.width;
+                s_screenH = Screen.height;
+                if (s_built && s_root == null) s_built = false; // 누가 파괴했으면 다시 만든다
+            }
+            if (!s_built)
             {
                 if (!showAny) { s_rootActive = s_barActive = s_keyActive = false; return; }
                 Build();
@@ -151,12 +177,22 @@ internal static class PlayOverlay
         s_rootActive = true;
         s_barActive = true;
         s_keyActive = true;
+        s_built = true;
+        s_ticks.Clear();
+        s_tickEnabled.Clear();
+        s_keys.Clear();
+        s_keyLayoutValid = false;
+        s_barLayoutValid = false;
+        s_labelShown = false;
 
         s_track = NewImage(s_barGroup, "Track");
         for (int i = 0; i < s_ranges.Length; i++) s_ranges[i] = NewImage(s_barGroup, $"Range{i}");
         s_center = NewImage(s_barGroup, "Center");
         s_labelShadow = NewText(s_barGroup, "LabelShadow", 16);
         s_label = NewText(s_barGroup, "Label", 16);
+        // AddComponent<TextMeshProUGUI>는 기본 enabled=true → 관리 플래그(s_labelShown=false)와 일치시킨다
+        s_labelShadow.enabled = false;
+        s_label.enabled = false;
         Core.Log.Msg("[PlayOverlay] 오버레이 생성 (uGUI)");
     }
 
@@ -245,18 +281,18 @@ internal static class PlayOverlay
     }
 
     /// <summary>왼쪽 위 기준 픽셀 사각형(sxtg2 좌표계)을 캔버스(왼쪽 아래 기준)에 놓는다.</summary>
-    private static void Place(Graphic g, Rect r)
+    private static void Place(Graphic g, Box r)
     {
         var rt = g.rectTransform;
-        rt.anchoredPosition = new Vector2(r.x, s_screenH - r.y - r.height);
-        rt.sizeDelta = new Vector2(r.width, r.height);
+        rt.anchoredPosition = Vec2(r.X, s_screenH - r.Y - r.H);
+        rt.sizeDelta = Vec2(r.W, r.H);
     }
 
-    private static void SetRect(Image img, Rect r, Color c, int shape = 0)
+    private static void SetRect(Image img, Box r, Color c, int shape = 0)
     {
         Place(img, r);
         img.color = c;
-        img.sprite = shape == 0 ? null : ShapeSprite(shape, Mathf.RoundToInt(r.width), Mathf.RoundToInt(r.height));
+        img.sprite = shape == 0 ? null : ShapeSprite(shape, (int)MathF.Round(r.W), (int)MathF.Round(r.H));
         img.enabled = true;
     }
 
@@ -301,11 +337,11 @@ internal static class PlayOverlay
 
     private static Color JudgeColor(int j) => j switch
     {
-        (int)JudgmentType.PerfectHigh => new Color(1f, 1f, 1f),
-        (int)JudgmentType.Perfect => new Color(0.35f, 0.75f, 1f),
-        (int)JudgmentType.Great => new Color(1f, 0.8f, 0.2f),
-        (int)JudgmentType.Good => new Color(0.4f, 0.9f, 0.4f),
-        _ => new Color(1f, 0.3f, 0.4f),
+        (int)JudgmentType.PerfectHigh => Rgba(1f, 1f, 1f, 1f),
+        (int)JudgmentType.Perfect => Rgba(0.35f, 0.75f, 1f, 1f),
+        (int)JudgmentType.Great => Rgba(1f, 0.8f, 0.2f, 1f),
+        (int)JudgmentType.Good => Rgba(0.4f, 0.9f, 0.4f, 1f),
+        _ => Rgba(1f, 0.3f, 0.4f, 1f),
     };
 
     private static string JudgeName(int j) => j switch
@@ -378,18 +414,22 @@ internal static class PlayOverlay
             s_barLayoutValid = true;
             s_label.fontSize = 16f * k;
             s_labelShadow.fontSize = 16f * k;
-            SetRect(s_track, new Rect(cx - barW / 2f, cy - barH / 2f, barW, barH), new Color(0.08f, 0.08f, 0.08f, 0.65f), trackShape);
-            SetRange(s_ranges[0], cx, cy, barW, barH, vertical, RangeMs[2] * 2f * scale, new Color(0.65f, 0.55f, 0.12f, 0.18f), rangeShape); // GREAT
-            SetRange(s_ranges[1], cx, cy, barW, barH, vertical, RangeMs[1] * 2f * scale, new Color(0.30f, 0.60f, 0.90f, 0.22f), rangeShape); // PERFECT
-            SetRange(s_ranges[2], cx, cy, barW, barH, vertical, RangeMs[0] * 2f * scale, new Color(0.85f, 0.85f, 0.85f, 0.28f), rangeShape); // PERFECT HIGH
-            SetRect(s_center, vertical ? new Rect(cx - barW / 2f - 2f, cy - 1f, barW + 4f, 2f) : new Rect(cx - 1f, cy - barH / 2f - 2f, 2f, barH + 4f), Color.white);
+            SetRect(s_track, new Box(cx - barW / 2f, cy - barH / 2f, barW, barH), Rgba(0.08f, 0.08f, 0.08f, 0.65f), trackShape);
+            SetRange(s_ranges[0], cx, cy, barW, barH, vertical, RangeMs[2] * 2f * scale, Rgba(0.65f, 0.55f, 0.12f, 0.18f), rangeShape); // GREAT
+            SetRange(s_ranges[1], cx, cy, barW, barH, vertical, RangeMs[1] * 2f * scale, Rgba(0.30f, 0.60f, 0.90f, 0.22f), rangeShape); // PERFECT
+            SetRange(s_ranges[2], cx, cy, barW, barH, vertical, RangeMs[0] * 2f * scale, Rgba(0.85f, 0.85f, 0.85f, 0.28f), rangeShape); // PERFECT HIGH
+            SetRect(s_center, vertical ? new Box(cx - barW / 2f - 2f, cy - 1f, barW + 4f, 2f) : new Box(cx - 1f, cy - barH / 2f - 2f, 2f, barH + 4f), White);
         }
 
         const int MaxVisibleTicks = 32;
         int activeCount = Math.Min(s_history.Count, MaxVisibleTicks);
         if (s_ticks.Count < activeCount)
         {
-            while (s_ticks.Count < activeCount) s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
+            while (s_ticks.Count < activeCount)
+            {
+                s_ticks.Add(NewImage(s_barGroup, $"Tick{s_ticks.Count}"));
+                s_tickEnabled.Add(true); // AddComponent<Image> 기본값
+            }
             s_labelShadow.transform.SetAsLastSibling(); // 새 틱이 글자·그림자를 덮지 않게
             s_label.transform.SetAsLastSibling();
             s_ticksPlacedVersion = -1;
@@ -402,21 +442,21 @@ internal static class PlayOverlay
             var tick = s_ticks[i];
             if (i >= activeCount)
             {
-                if (tick.enabled) tick.enabled = false;
+                if (s_tickEnabled[i]) { tick.enabled = false; s_tickEnabled[i] = false; }
                 continue;
             }
             // 최근 틱 우선 표시 (오래된 틱은 자동 가려짐)
             var t = s_history[s_history.Count - activeCount + i];
             if (placeTicks)
             {
-                float ms = Mathf.Clamp(t.OffsetMs, -maxMs, maxMs);
+                float ms = Math.Clamp(t.OffsetMs, -maxMs, maxMs);
                 Place(tick, vertical
-                    ? new Rect(cx - barW / 2f - 1f, cy - ms * scale - 1f, barW + 2f, 2f)  // 위 = FAST
-                    : new Rect(cx + ms * scale - 1f, cy - barH / 2f - 1f, 2f, barH + 2f)); // 오른쪽 = FAST
+                    ? new Box(cx - barW / 2f - 1f, cy - ms * scale - 1f, barW + 2f, 2f)  // 위 = FAST
+                    : new Box(cx + ms * scale - 1f, cy - barH / 2f - 1f, 2f, barH + 2f)); // 오른쪽 = FAST
             }
-            var c = JudgeColor(t.Judgment); c.a = Mathf.Clamp01(1f - (now - t.Time) / Duration) * 0.9f;
+            var c = JudgeColor(t.Judgment); c.a = Clamp01(1f - (now - t.Time) / Duration) * 0.9f;
             tick.color = c; // 틱은 스프라이트 없는 사각형 (NewImage 기본값)
-            if (!tick.enabled) tick.enabled = true;
+            if (!s_tickEnabled[i]) { tick.enabled = true; s_tickEnabled[i] = true; }
         }
 
         if (s_last is HitTick last && now - last.Time < Duration)
@@ -429,19 +469,21 @@ internal static class PlayOverlay
                 bool labelLeft = vertical && right;
                 float labelW = 320f * k, labelH = 24f * k;
                 var rect = vertical
-                    ? (labelLeft ? new Rect(cx - barW / 2f - 10f * k - labelW, cy - labelH / 2f, labelW, labelH) : new Rect(cx + barW / 2f + 10f * k, cy - labelH / 2f, labelW, labelH))
-                    : new Rect(cx - 90f * k, cy - barH / 2f - 28f * k, labelW, labelH);
+                    ? (labelLeft ? new Box(cx - barW / 2f - 10f * k - labelW, cy - labelH / 2f, labelW, labelH) : new Box(cx + barW / 2f + 10f * k, cy - labelH / 2f, labelW, labelH))
+                    : new Box(cx - 90f * k, cy - barH / 2f - 28f * k, labelW, labelH);
                 var align = labelLeft ? TextAlignmentOptions.MidlineRight : TextAlignmentOptions.MidlineLeft;
-                SetText(s_labelShadow, new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), text, align);
+                SetText(s_labelShadow, new Box(rect.X + 1.5f, rect.Y + 1.5f, rect.W, rect.H), text, align);
                 SetText(s_label, rect, text, align);
+                s_labelShown = true;
             }
-            float alpha = Mathf.Clamp01(1f - (now - last.Time) / Duration);
-            s_labelShadow.color = new Color(0f, 0f, 0f, alpha * 0.8f);
+            float alpha = Clamp01(1f - (now - last.Time) / Duration);
+            s_labelShadow.color = Rgba(0f, 0f, 0f, alpha * 0.8f);
             var c = JudgeColor(last.Judgment); c.a = alpha;
             s_label.color = c;
         }
-        else if (s_label.enabled || s_labelShadow.enabled)
+        else if (s_labelShown)
         {
+            s_labelShown = false;
             s_label.enabled = false;
             s_labelShadow.enabled = false;
             s_labelVersion = -1; // 다시 나타날 때 글자를 새로 설정
@@ -451,11 +493,11 @@ internal static class PlayOverlay
     private static void SetRange(Image img, float cx, float cy, float barW, float barH, bool vertical, float size, Color color, int shape)
     {
         SetRect(img, vertical
-            ? new Rect(cx - barW / 2f + 1f, cy - size / 2f, barW - 2f, size)
-            : new Rect(cx - size / 2f, cy - barH / 2f + 1f, size, barH - 2f), color, shape);
+            ? new Box(cx - barW / 2f + 1f, cy - size / 2f, barW - 2f, size)
+            : new Box(cx - size / 2f, cy - barH / 2f + 1f, size, barH - 2f), color, shape);
     }
 
-    private static void SetText(TextMeshProUGUI t, Rect r, string text, TextAlignmentOptions align)
+    private static void SetText(TextMeshProUGUI t, Box r, string text, TextAlignmentOptions align)
     {
         Place(t, r);
         t.text = text;
@@ -572,7 +614,7 @@ internal static class PlayOverlay
         {
             var bg = NewImage(s_keyGroup, $"Key{s_keys.Count}");
             var border = bg.gameObject.AddComponent<Outline>();
-            border.effectDistance = new Vector2(1f, -1f);
+            border.effectDistance = Vec2(1f, -1f);
             var label = NewText(bg.transform, "Label", 15);
             var rt = label.rectTransform; // 글자는 칸 전체를 채운다 (한 번만 설정)
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
@@ -603,7 +645,7 @@ internal static class PlayOverlay
                 if (i >= labels.Length) { bg.gameObject.SetActive(false); continue; }
                 bg.gameObject.SetActive(true);
                 float w = i == pitchIndex ? pitchW : boxW;
-                Place(bg, new Rect(x, y, w, boxH));
+                Place(bg, new Box(x, y, w, boxH));
                 bg.sprite = null;
                 bg.enabled = true;
                 text.text = labels[i];
@@ -621,8 +663,8 @@ internal static class PlayOverlay
             var (bg, border, text) = s_keys[i];
             bool down = state == 1;
             bg.color = down ? (i == pitchIndex ? ModConfig.KeyViewerPitchPressedColor : ModConfig.KeyViewerPressedColor) : ModConfig.KeyViewerNormalColor;
-            border.effectColor = down ? new Color(1f, 1f, 1f, 0.95f) : new Color(1f, 1f, 1f, 0.35f);
-            text.color = down ? new Color(0.05f, 0.05f, 0.05f, 1f) : new Color(1f, 1f, 1f, 0.9f);
+            border.effectColor = down ? Rgba(1f, 1f, 1f, 0.95f) : Rgba(1f, 1f, 1f, 0.35f);
+            text.color = down ? Rgba(0.05f, 0.05f, 0.05f, 1f) : Rgba(1f, 1f, 1f, 0.9f);
         }
     }
 
@@ -657,7 +699,7 @@ internal static class PlayOverlay
                 for (int x = 0; x < w; x++)
                 {
                     float d = shape == 1 ? Capsule(x + 0.5f, y + 0.5f, w, h) : Diamond(x + 0.5f, y + 0.5f, w, h);
-                    pixels[rowOffset + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(0.5f - d));
+                    pixels[rowOffset + x] = Rgba(1f, 1f, 1f, Clamp01(0.5f - d)); // 픽셀마다 도는 루프 → Mathf·Color 생성자(IL2CPP) 금지
                 }
             }
             tex.SetPixels(pixels);
@@ -677,19 +719,19 @@ internal static class PlayOverlay
     /// <summary>양끝이 반원인 알약 모양까지의 부호 있는 거리.</summary>
     private static float Capsule(float px, float py, int w, int h)
     {
-        float r = Mathf.Min(w, h) / 2f;
+        float r = Math.Min(w, h) / 2f;
         float ax = w >= h ? r : w / 2f, ay = w >= h ? h / 2f : r;
         float bx = w >= h ? w - r : w / 2f, by = w >= h ? h / 2f : h - r;
         float dx = bx - ax, dy = by - ay, lenSq = dx * dx + dy * dy;
-        float t = lenSq > 0.0001f ? Mathf.Clamp01(((px - ax) * dx + (py - ay) * dy) / lenSq) : 0f;
+        float t = lenSq > 0.0001f ? Clamp01(((px - ax) * dx + (py - ay) * dy) / lenSq) : 0f;
         float ex = px - (ax + t * dx), ey = py - (ay + t * dy);
-        return Mathf.Sqrt(ex * ex + ey * ey) - r;
+        return MathF.Sqrt(ex * ex + ey * ey) - r;
     }
 
     /// <summary>가운데가 가장 넓고 양끝이 뾰족한 다이아몬드까지의 부호 있는 거리.</summary>
     private static float Diamond(float px, float py, int w, int h)
     {
         float hw = w / 2f, hh = h / 2f;
-        return (hh * Mathf.Abs(px - hw) + hw * Mathf.Abs(py - hh) - hw * hh) / Mathf.Sqrt(hw * hw + hh * hh);
+        return (hh * MathF.Abs(px - hw) + hw * MathF.Abs(py - hh) - hw * hh) / MathF.Sqrt(hw * hw + hh * hh);
     }
 }

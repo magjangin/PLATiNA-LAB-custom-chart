@@ -46,6 +46,7 @@ internal static class MediaDuration
             if (!hdr.AsSpan(8, 4).SequenceEqual("WAVE"u8)) return null;
 
             uint byteRate = 0;
+            long dataLen = 0;
             var chunk = new byte[8];
             long pos = 12;
             while (pos + 8 <= len)
@@ -54,7 +55,7 @@ internal static class MediaDuration
                 ReadFully(fs, chunk, 0, 8);
                 uint size = BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(4));
                 long body = pos + 8;
-                if (chunk.AsSpan(0, 4).SequenceEqual("fmt "u8) && size >= 16)
+                if (chunk.AsSpan(0, 4).SequenceEqual("fmt "u8) && size >= 16 && body + 16 <= len)
                 {
                     var fmt = new byte[16];
                     ReadFully(fs, fmt, 0, 16);
@@ -62,10 +63,9 @@ internal static class MediaDuration
                 }
                 else if (chunk.AsSpan(0, 4).SequenceEqual("data"u8))
                 {
-                    if (byteRate == 0) return null;
-                    long dataLen = size == 0 || size == uint.MaxValue || body + size > len ? len - body : size;
-                    return dataLen > 0 ? dataLen / (double)byteRate : null;
+                    dataLen = size == 0 || size == uint.MaxValue || body + size > len ? len - body : size;
                 }
+                if (byteRate > 0 && dataLen > 0) return dataLen / (double)byteRate;
                 pos = body + size + (size & 1); // 청크는 짝수 바이트로 정렬된다
             }
         }

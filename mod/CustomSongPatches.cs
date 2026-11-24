@@ -13,7 +13,8 @@ internal static class SongListBuilder_BuildNameBanners_Patch
 {
     private static void Prefix()
     {
-        Core.Log.Msg("[CustomSongs] SongListBuilder.BuildNameBanners");
+        // 선곡 화면을 열 때마다 불린다 → 진단 로그를 켰을 때만 남긴다 (주입 결과는 Inject가 따로 기록)
+        if (ModConfig.DiagnosticLogs) Core.Log.Msg("[CustomSongs] SongListBuilder.BuildNameBanners");
         CustomSongs.InjectGuarded();
     }
 }
@@ -121,10 +122,12 @@ internal static class SongCategoryResourceCollection_GetDataSet_Patch
 
     private static void Postfix(SongCategoryResourceCollection __instance, string categoryKey, ref SongCategoryResourceDataSet __result)
     {
-        if (__instance == null || categoryKey != CustomSongs.CategoryTag || HookGuard.IsDisabled(Hook)) return;
+        // 카테고리 UI를 그릴 때마다 모든 카테고리 키로 불린다. 문자열 비교(관리 코드)를 먼저 해서
+        // custom이 아닌 대부분의 호출은 Unity Object의 == null(IL2CPP 호출) 없이 끝낸다.
+        if (categoryKey != CustomSongs.CategoryTag || __instance is null || HookGuard.IsDisabled(Hook)) return;
         try
         {
-            if (s_dataSet == null || s_dataSet.WasCollected)
+            if (s_dataSet is null || s_dataSet.WasCollected || s_dataSet == null)
                 s_dataSet = CreateOrFallback(__instance);
             if (s_dataSet != null) __result = s_dataSet;
         }
@@ -275,7 +278,7 @@ internal static class PatternPlayer_DetermineRunning_HoldEnd_Patch
 
     private static void Release(Il2CppPlatinaLab.Main.InGame.PatternPlayer player, bool held)
     {
-        if (!held || player == null) return;
+        if (!held || player is null) return; // 매 프레임 경로: Unity == null(IL2CPP 호출) 대신 참조 비교
         try { ClearFlag(player); }
         catch (Exception e) { HookGuard.Fail(Hook, e); }
     }

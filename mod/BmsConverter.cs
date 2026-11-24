@@ -162,34 +162,39 @@ internal static class BmsConverter
             var line = raw.Trim().TrimStart('﻿');
             if (!line.StartsWith("#")) continue;
 
-            if (line.StartsWith("#ENDIF", StringComparison.OrdinalIgnoreCase) || line.StartsWith("#IFEND", StringComparison.OrdinalIgnoreCase) ||
-                line.StartsWith("#ENDRANDOM", StringComparison.OrdinalIgnoreCase))
+            if (IsDirective(line, "#ENDIF") || IsDirective(line, "#IFEND") || IsDirective(line, "#ENDRANDOM"))
             {
                 skipping = false;
                 branchTaken = false;
                 continue;
             }
-            if (line.StartsWith("#RANDOM", StringComparison.OrdinalIgnoreCase) || line.StartsWith("#SETRANDOM", StringComparison.OrdinalIgnoreCase))
+            if (IsDirective(line, "#RANDOM"))
             {
                 sawRandom = true;
                 randomRoll = 1;
                 continue;
             }
-            if (line.StartsWith("#ELSEIF", StringComparison.OrdinalIgnoreCase))
+            if (IsDirective(line, "#SETRANDOM"))
+            {
+                sawRandom = true;
+                randomRoll = int.TryParse(line[10..].Trim(), out var fixedRoll) && fixedRoll > 0 ? fixedRoll : 1;
+                continue;
+            }
+            if (IsDirective(line, "#ELSEIF"))
             {
                 sawRandom = true;
                 skipping = branchTaken || !IsRolledBranch(line[7..], randomRoll);
                 branchTaken |= !skipping;
                 continue;
             }
-            if (line.StartsWith("#ELSE", StringComparison.OrdinalIgnoreCase))
+            if (IsDirective(line, "#ELSE"))
             {
                 sawRandom = true;
                 skipping = branchTaken;
                 branchTaken = true;
                 continue;
             }
-            if (line.StartsWith("#IF", StringComparison.OrdinalIgnoreCase))
+            if (IsDirective(line, "#IF"))
             {
                 sawRandom = true;
                 skipping = !IsRolledBranch(line[3..], randomRoll);
@@ -219,8 +224,8 @@ internal static class BmsConverter
             else if (key.StartsWith("BPM") && key.Length > 3 && TryDouble(arg, out var b)) chart.BpmTable[key[3..]] = b;
         }
 
-        if (sawRandom)
-            Core.Log.Warning($"[BMS] {System.IO.Path.GetFileName(path)}: #RANDOM/#IF가 있어 항상 1번 분기만 변환합니다 (다른 분기의 노트는 무시)");
+        if (sawRandom && !headerOnly)
+            Core.Log.Warning($"[BMS] {System.IO.Path.GetFileName(path)}: #RANDOM/#IF가 있어 고정 분기({randomRoll}번)만 변환합니다 (다른 분기의 노트는 무시)");
         if (headerOnly) return chart;
 
         int width = chart.Wav.Count > 0 ? chart.Wav.Keys.Max(k => k.Length) : 2;
@@ -239,6 +244,10 @@ internal static class BmsConverter
         chart.Objects.Sort(CompareObjects);
         return chart;
     }
+
+    private static bool IsDirective(string line, string directive) =>
+        line.StartsWith(directive, StringComparison.OrdinalIgnoreCase)
+        && (line.Length == directive.Length || line[directive.Length] is ' ' or '\t');
 
     private static bool IsRolledBranch(string arg, int roll) => int.TryParse(arg.Trim(), out var branch) && branch == roll;
 
