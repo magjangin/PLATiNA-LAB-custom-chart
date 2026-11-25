@@ -29,6 +29,19 @@ Write-Host "버전 $version ($tag)"
 
 if ((git status --porcelain) -ne $null -and $Publish) { throw '작업 트리가 깨끗하지 않습니다. 먼저 커밋하세요.' }
 
+if ($Publish) {
+    # gh release create --target main 은 원격 main 에 태그를 단다 → 로컬 HEAD가 원격 main과 같아야 릴리즈 DLL과 태그 소스가 일치한다
+    & git fetch origin main --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'git fetch origin main 실패' }
+    $head = (& git rev-parse HEAD).Trim()
+    $remote = (& git rev-parse origin/main).Trim()
+    if ($head -ne $remote) { throw "로컬 HEAD($head)가 origin/main($remote)과 다릅니다. main 으로 머지·푸시한 뒤 배포하세요." }
+    & git ls-remote --exit-code --tags origin "refs/tags/$tag" *> $null
+    if ($LASTEXITCODE -eq 0) { throw "태그 $tag 가 이미 원격에 있습니다. Core.cs 버전을 올리세요." }
+    $changelog = Get-Content (Join-Path $root 'CHANGELOG.md') -Raw
+    if ($changelog -notmatch "(?m)^## \[$([regex]::Escape($version))\]") { throw "CHANGELOG.md 에 [$version] 항목이 없습니다." }
+}
+
 $buildArgs = @('build', 'mod\PLATiNALAB.Mod.csproj', '-c', 'Release')
 if ($GameRoot) { $buildArgs += "-p:GameRoot=$GameRoot" }
 & dotnet @buildArgs

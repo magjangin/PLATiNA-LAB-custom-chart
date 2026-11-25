@@ -15,14 +15,26 @@ namespace PLATiNALAB.Mod;
 /// <summary>
 /// 오프라인 환경에서 씬 전환 시 닫힌 ACCESSING.. 아이캐치 커튼이 열리지 않고 멈추는 현상을 해소하고,
 /// 선곡 화면(SongSelect) 노출 시 잔류 커튼을 즉시 비활성화한다.
+/// 커튼 정리는 OfflineMode=1(<see cref="Offline.Enabled"/>)일 때만 한다 — 온라인에서는 게임 원본 연출 그대로 (19차 감사).
+/// SectionController.Initialize 방어는 커스텀 곡 전용이라 모드와 무관하게 동작한다.
 /// </summary>
 internal static class CurtainBypassManager
 {
     private const string Hook = "CurtainBypassManager.Dismiss";
 
-    public static void DismissAllCurtains()
+    /// <summary>
+    /// 곡을 넘길 때마다(DetailViewerManager.SetSong) 씬 전체 FindObjectsOfType을 두 번 돌던 것을 줄인다.
+    /// 잔류 커튼은 씬 전환 직후에만 생기므로, 곡 변경으로 인한 정리는 마지막 정리 후 1초 안이면 건너뛴다.
+    /// </summary>
+    private const long ThrottleMs = 1_000;
+    private static long s_lastScanTick = long.MinValue / 2;
+
+    public static void DismissAllCurtains(bool throttled = false)
     {
-        if (HookGuard.IsDisabled(Hook)) return;
+        if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
+        long now = Environment.TickCount64;
+        if (throttled && now - Interlocked.Read(ref s_lastScanTick) < ThrottleMs) return;
+        Interlocked.Exchange(ref s_lastScanTick, now);
         try
         {
             DismissInternal();
@@ -66,6 +78,7 @@ internal static class CurtainBypassManager
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(AiringCurtainController), nameof(AiringCurtainController.Leave))]
 internal static class AiringCurtainController_Leave_Patch
 {
@@ -73,7 +86,7 @@ internal static class AiringCurtainController_Leave_Patch
 
     private static void Postfix(AiringCurtainController __instance)
     {
-        if (HookGuard.IsDisabled(Hook)) return;
+        if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
         try
         {
             HandleLeave(__instance);
@@ -95,6 +108,7 @@ internal static class AiringCurtainController_Leave_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(FadingCurtainController), nameof(FadingCurtainController.Leave))]
 internal static class FadingCurtainController_Leave_Patch
 {
@@ -102,7 +116,7 @@ internal static class FadingCurtainController_Leave_Patch
 
     private static void Postfix(FadingCurtainController __instance)
     {
-        if (HookGuard.IsDisabled(Hook)) return;
+        if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
         try
         {
             HandleLeave(__instance);
@@ -124,6 +138,7 @@ internal static class FadingCurtainController_Leave_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SongSelectDirector), nameof(SongSelectDirector.Awake))]
 internal static class SongSelectDirector_Awake_Patch
 {
@@ -131,7 +146,7 @@ internal static class SongSelectDirector_Awake_Patch
 
     private static void Postfix()
     {
-        if (HookGuard.IsDisabled(Hook)) return;
+        if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
         try
         {
             HandleAwake();
@@ -146,10 +161,12 @@ internal static class SongSelectDirector_Awake_Patch
     private static void HandleAwake()
     {
         Core.Log.Msg("[Curtain] SongSelectDirector.Awake 감지 -> 커튼 정리");
+        Offline.NoteBootCompleted();
         CurtainBypassManager.DismissAllCurtains();
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SongSelectDirector), nameof(SongSelectDirector.OnSceneVisible))]
 internal static class SongSelectDirector_OnSceneVisible_Patch
 {
@@ -157,7 +174,7 @@ internal static class SongSelectDirector_OnSceneVisible_Patch
 
     private static void Postfix()
     {
-        if (HookGuard.IsDisabled(Hook)) return;
+        if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
         try
         {
             HandleVisible();
@@ -176,6 +193,7 @@ internal static class SongSelectDirector_OnSceneVisible_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(DetailViewerManager), nameof(DetailViewerManager.SetSong))]
 internal static class DetailViewerManager_SetSong_Patch
 {
@@ -183,7 +201,7 @@ internal static class DetailViewerManager_SetSong_Patch
 
     private static void Postfix(SongInfo songInfo)
     {
-        if (HookGuard.IsDisabled(Hook)) return;
+        if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
         try
         {
             HandleSetSong(songInfo);
@@ -197,7 +215,7 @@ internal static class DetailViewerManager_SetSong_Patch
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("DetailViewerManager.SetSong")]
     private static void HandleSetSong(SongInfo songInfo)
     {
-        CurtainBypassManager.DismissAllCurtains();
+        CurtainBypassManager.DismissAllCurtains(throttled: true);
     }
 }
 

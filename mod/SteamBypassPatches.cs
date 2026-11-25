@@ -21,23 +21,29 @@ namespace PLATiNALAB.Mod;
 
 /// <summary>
 /// 오프라인 독립 실행 환경에서 스팀 클라이언트 없이 게임이 온전히 기동되도록 Steamworks SDK 및 플랫폼을 우회한다.
+/// 모든 Prefix는 OfflineMode=1(<see cref="Offline.Enabled"/>)일 때만 동작하고, 꺼져 있으면 게임 원본을 그대로 실행한다.
+/// 닉네임·사용자 ID는 config.txt의 OfflineNickname / OfflineUserId (예전에는 제작자 값이 하드코딩돼 있었다).
 /// </summary>
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamAPI), nameof(SteamAPI.Init))]
 internal static class SteamAPI_Init_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = true;
         Core.Log.Msg("[SteamBypass] SteamAPI.Init -> true (우회)");
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamAPI), nameof(SteamAPI.InitEx))]
 internal static class SteamAPI_InitEx_Patch
 {
     private static bool Prefix(ref ESteamAPIInitResult __result, ref string OutSteamErrMsg)
     {
+        if (!Offline.Enabled) return true;
         __result = ESteamAPIInitResult.k_ESteamAPIInitResult_OK;
         OutSteamErrMsg = string.Empty;
         Core.Log.Msg("[SteamBypass] SteamAPI.InitEx -> OK (우회)");
@@ -45,86 +51,103 @@ internal static class SteamAPI_InitEx_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamAPI), nameof(SteamAPI.RestartAppIfNecessary))]
 internal static class SteamAPI_RestartAppIfNecessary_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = false;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamAPI), nameof(SteamAPI.IsSteamRunning))]
 internal static class SteamAPI_IsSteamRunning_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = true;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamAPI), nameof(SteamAPI.RunCallbacks))]
 internal static class SteamAPI_RunCallbacks_Patch
 {
     private static bool Prefix()
     {
+        if (!Offline.Enabled) return true;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamUser), nameof(SteamUser.GetSteamID))]
 internal static class SteamUser_GetSteamID_Patch
 {
     private static unsafe bool Prefix(ref CSteamID __result)
     {
-        ulong val = 76561199502858707UL;
+        if (!Offline.Enabled) return true;
+        ulong val = Offline.SteamId64;
         __result = *(CSteamID*)&val;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamUser), nameof(SteamUser.BLoggedOn))]
 internal static class SteamUser_BLoggedOn_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = true;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SteamUser), nameof(SteamUser.GetAuthTicketForWebApi))]
 internal static class SteamUser_GetAuthTicketForWebApi_Patch
 {
     private static unsafe bool Prefix(ref HAuthTicket __result)
     {
+        if (!Offline.Enabled) return true;
         uint val = 1;
         __result = *(HAuthTicket*)&val;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(InteropHelp), nameof(InteropHelp.TestIfAvailableClient))]
 internal static class InteropHelp_TestIfAvailableClient_Patch
 {
     private static bool Prefix()
     {
+        if (!Offline.Enabled) return true;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(Platform), nameof(Platform.PlatformUserId), MethodType.Getter)]
 internal static class Platform_PlatformUserId_Patch
 {
     private static bool Prefix(ref string __result)
     {
-        __result = "76561199502858707";
+        if (!Offline.Enabled) return true;
+        __result = Offline.UserId;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(Platform), nameof(Platform.GetAuthToken))]
 internal static class Platform_GetAuthToken_Patch
 {
@@ -132,6 +155,7 @@ internal static class Platform_GetAuthToken_Patch
 
     private static bool Prefix(ref UniTask<string> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -152,6 +176,7 @@ internal static class Platform_GetAuthToken_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(LoginProcedure), nameof(LoginProcedure.LoginAndLoadProfile))]
 internal static class LoginProcedure_LoginAndLoadProfile_Patch
 {
@@ -159,11 +184,13 @@ internal static class LoginProcedure_LoginAndLoadProfile_Patch
 
     private static bool Prefix(ref UniTask<LoginResultType> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             SetupOfflineSession();
             __result = SuccessResult();
+            Offline.NoteBootCompleted();
             Core.Log.Msg("[SteamBypass] LoginProcedure.LoginAndLoadProfile -> Success (오프라인 세션 설정 완료)");
             return false;
         }
@@ -182,8 +209,8 @@ internal static class LoginProcedure_LoginAndLoadProfile_Patch
             var db = RuntimeDatabase.Instance;
             if (db is not null)
             {
-                if (db.UserId is not null) db.UserId.Value = "76561199502858707";
-                if (db.UserNickname is not null) db.UserNickname.Value = "화영왕";
+                if (db.UserId is not null) db.UserId.Value = Offline.UserId;
+                if (db.UserNickname is not null) db.UserNickname.Value = Offline.Nickname;
                 if (db.IsUserNicknameValid is not null) db.IsUserNicknameValid.Value = true;
                 if (db.UserSessionToken is not null) db.UserSessionToken.Value = "platinalab-offline-session";
                 if (db.IsUserProfileLoaded is not null) db.IsUserProfileLoaded.Value = true;
@@ -202,6 +229,7 @@ internal static class LoginProcedure_LoginAndLoadProfile_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(LoginSurface), nameof(LoginSurface.LoginSteam))]
 internal static class LoginSurface_LoginSteam_Patch
 {
@@ -209,6 +237,7 @@ internal static class LoginSurface_LoginSteam_Patch
 
     private static bool Prefix(ref UniTask<SurfaceResult<LoginOutcome>> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -226,11 +255,12 @@ internal static class LoginSurface_LoginSteam_Patch
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("LoginSurface.LoginSteam")]
     private static UniTask<SurfaceResult<LoginOutcome>> SuccessResult()
     {
-        var outcome = new LoginOutcome(true, "화영왕", true);
+        var outcome = new LoginOutcome(true, Offline.Nickname, true);
         return UniTask.FromResult(SurfaceResult<LoginOutcome>.Success(outcome));
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(UserSurface), nameof(UserSurface.GetUserProfile))]
 internal static class UserSurface_GetUserProfile_Patch
 {
@@ -238,6 +268,7 @@ internal static class UserSurface_GetUserProfile_Patch
 
     private static bool Prefix(ref UniTask<SurfaceResult<UserProfile>> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -256,12 +287,13 @@ internal static class UserSurface_GetUserProfile_Patch
     private static UniTask<SurfaceResult<UserProfile>> SuccessResult()
     {
         var profile = new UserProfile();
-        profile.Nickname = "화영왕";
-        profile.PlayerCode = "HWAPYEONG";
+        profile.Nickname = Offline.Nickname;
+        profile.PlayerCode = "OFFLINE";
         return UniTask.FromResult(SurfaceResult<UserProfile>.Success(profile));
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(UserSurface), nameof(UserSurface.GetUnlockedFeatures))]
 internal static class UserSurface_GetUnlockedFeatures_Patch
 {
@@ -269,6 +301,7 @@ internal static class UserSurface_GetUnlockedFeatures_Patch
 
     private static bool Prefix(ref UniTask<SurfaceResult<Il2CppStructArray<int>>> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -291,6 +324,7 @@ internal static class UserSurface_GetUnlockedFeatures_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(ContentsSurface), nameof(ContentsSurface.GetContentsAvailability))]
 internal static class ContentsSurface_GetContentsAvailability_Patch
 {
@@ -298,6 +332,7 @@ internal static class ContentsSurface_GetContentsAvailability_Patch
 
     private static bool Prefix(ref UniTask<SurfaceResult<CatalogPermissionResponse>> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -320,6 +355,7 @@ internal static class ContentsSurface_GetContentsAvailability_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(LoginInitialize), nameof(LoginInitialize.Init))]
 internal static class LoginInitialize_Init_Patch
 {
@@ -327,6 +363,7 @@ internal static class LoginInitialize_Init_Patch
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -345,16 +382,19 @@ internal static class LoginInitialize_Init_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(HttpRequestInterceptor), nameof(HttpRequestInterceptor.IsCriticalError))]
 internal static class HttpRequestInterceptor_IsCriticalError_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = false;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(HttpRequestInterceptor), nameof(HttpRequestInterceptor.HandleCriticalError))]
 internal static class HttpRequestInterceptor_HandleCriticalError_Patch
 {
@@ -362,11 +402,13 @@ internal static class HttpRequestInterceptor_HandleCriticalError_Patch
 
     private static bool Prefix(int errorCode, ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = CompletedTask();
             Core.Log.Warning($"[SteamBypass] HttpRequestInterceptor.HandleCriticalError({errorCode}) 차단 (오프라인 유지)");
+            Offline.NoteBlockedError();
             return false;
         }
         catch (Exception e)
@@ -380,6 +422,7 @@ internal static class HttpRequestInterceptor_HandleCriticalError_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(ErrorDialogCollection), nameof(ErrorDialogCollection.FatalAPIServerError))]
 internal static class ErrorDialogCollection_FatalAPIServerError_Patch
 {
@@ -387,11 +430,13 @@ internal static class ErrorDialogCollection_FatalAPIServerError_Patch
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = CompletedTask();
             Core.Log.Warning("[SteamBypass] FatalAPIServerError 팝업 차단 (오프라인 유지)");
+            Offline.NoteBlockedError();
             return false;
         }
         catch (Exception e)
@@ -405,16 +450,20 @@ internal static class ErrorDialogCollection_FatalAPIServerError_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(ErrorDialogCollection), nameof(ErrorDialogCollection.APIServerError))]
 internal static class ErrorDialogCollection_APIServerError_Patch
 {
     private static bool Prefix()
     {
+        if (!Offline.Enabled) return true;
         Core.Log.Warning("[SteamBypass] APIServerError 팝업 차단 (오프라인 유지)");
+        Offline.NoteBlockedError();
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(ErrorDialogCollection), nameof(ErrorDialogCollection.ShowErrorForCode), new Type[] { typeof(int) })]
 internal static class ErrorDialogCollection_ShowErrorForCode_Patch
 {
@@ -422,11 +471,13 @@ internal static class ErrorDialogCollection_ShowErrorForCode_Patch
 
     private static bool Prefix(int errorCode, ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = CompletedTask();
             Core.Log.Warning($"[SteamBypass] ShowErrorForCode({errorCode}) 팝업 차단 (오프라인 유지)");
+            Offline.NoteBlockedError();
             return false;
         }
         catch (Exception e)
@@ -440,6 +491,7 @@ internal static class ErrorDialogCollection_ShowErrorForCode_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(ErrorDialogCollection), nameof(ErrorDialogCollection.ShowErrorForCode), new Type[] { typeof(SurfaceResult) })]
 internal static class ErrorDialogCollection_ShowErrorForCode_SurfaceResult_Patch
 {
@@ -447,11 +499,13 @@ internal static class ErrorDialogCollection_ShowErrorForCode_SurfaceResult_Patch
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = CompletedTask();
             Core.Log.Warning("[SteamBypass] ShowErrorForCode(SurfaceResult) 팝업 차단 (오프라인 유지)");
+            Offline.NoteBlockedError();
             return false;
         }
         catch (Exception e)
@@ -465,6 +519,7 @@ internal static class ErrorDialogCollection_ShowErrorForCode_SurfaceResult_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(ErrorDialogCollection), nameof(ErrorDialogCollection.ShowNotLoggedInDialogAndRestart))]
 internal static class ErrorDialogCollection_ShowNotLoggedInDialogAndRestart_Patch
 {
@@ -472,11 +527,13 @@ internal static class ErrorDialogCollection_ShowNotLoggedInDialogAndRestart_Patc
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = CompletedTask();
             Core.Log.Warning("[SteamBypass] ShowNotLoggedInDialogAndRestart 팝업 차단 (오프라인 유지)");
+            Offline.NoteBlockedError();
             return false;
         }
         catch (Exception e)
@@ -490,6 +547,7 @@ internal static class ErrorDialogCollection_ShowNotLoggedInDialogAndRestart_Patc
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(ErrorDialogCollection), nameof(ErrorDialogCollection.ShowMaintenanceDialogAndQuit))]
 internal static class ErrorDialogCollection_ShowMaintenanceDialogAndQuit_Patch
 {
@@ -497,11 +555,13 @@ internal static class ErrorDialogCollection_ShowMaintenanceDialogAndQuit_Patch
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = CompletedTask();
             Core.Log.Warning("[SteamBypass] ShowMaintenanceDialogAndQuit 팝업 차단 (오프라인 유지)");
+            Offline.NoteBlockedError();
             return false;
         }
         catch (Exception e)
@@ -515,6 +575,7 @@ internal static class ErrorDialogCollection_ShowMaintenanceDialogAndQuit_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(RewardManager), nameof(RewardManager.Load))]
 internal static class RewardManager_Load_Patch
 {
@@ -522,6 +583,7 @@ internal static class RewardManager_Load_Patch
 
     private static bool Prefix(RewardManager __instance, ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -557,6 +619,7 @@ internal static class RewardManager_Load_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(RewardManager), nameof(RewardManager.FetchAllUnlockStates))]
 internal static class RewardManager_FetchAllUnlockStates_Patch
 {
@@ -564,6 +627,7 @@ internal static class RewardManager_FetchAllUnlockStates_Patch
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -582,6 +646,7 @@ internal static class RewardManager_FetchAllUnlockStates_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(PersonalAgendaToastBoardFriendsPage), nameof(PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI))]
 internal static class PersonalAgendaToastBoardFriendsPage_FetchFocusInfoViaAPI_Patch
 {
@@ -589,6 +654,7 @@ internal static class PersonalAgendaToastBoardFriendsPage_FetchFocusInfoViaAPI_P
 
     private static bool Prefix(ref UniTask<Il2CppReferenceArray<Il2CppSystem.ValueTuple<string, Il2CppSystem.Nullable<int>>>> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -611,6 +677,7 @@ internal static class PersonalAgendaToastBoardFriendsPage_FetchFocusInfoViaAPI_P
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SocialSurface), nameof(SocialSurface.GetScoreRecordsOfFocusedUsers))]
 internal static class SocialSurface_GetScoreRecordsOfFocusedUsers_Patch
 {
@@ -618,6 +685,7 @@ internal static class SocialSurface_GetScoreRecordsOfFocusedUsers_Patch
 
     private static bool Prefix(ref UniTask<SurfaceResult<Il2CppReferenceArray<SocialFocusedUserScoreRecordEntry>>> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -640,6 +708,7 @@ internal static class SocialSurface_GetScoreRecordsOfFocusedUsers_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(SocialSurface), nameof(SocialSurface.GetFollowingList))]
 internal static class SocialSurface_GetFollowingList_Patch
 {
@@ -647,6 +716,7 @@ internal static class SocialSurface_GetFollowingList_Patch
 
     private static bool Prefix(ref UniTask<SurfaceResult<Il2CppReferenceArray<SocialUserFollowingListEntry>>> __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -669,46 +739,59 @@ internal static class SocialSurface_GetFollowingList_Patch
     }
 }
 
+/// <summary>
+/// 오프라인 모드에서 게임이 로그인·서버 실패로 스스로 종료하는 것만 막는다. 사용자가 메뉴에서 누른 종료는 허용한다
+/// (decf3b7에서는 모든 종료를 막아 게임 메뉴로 끌 수 없었다). 판단 기준은 <see cref="Offline.ShouldBlockQuit"/>.
+/// </summary>
+[OfflineOnly]
 [HarmonyPatch(typeof(UnityEngine.Application), nameof(UnityEngine.Application.Quit), new Type[] { })]
 internal static class Application_Quit_Patch
 {
     private static bool Prefix()
     {
-        Core.Log.Warning("[SteamBypass] Application.Quit() 호출 감지 -> 오프라인 보존을 위해 무시합니다.");
+        if (!Offline.ShouldBlockQuit(out var reason)) return true;
+        Core.Log.Warning($"[SteamBypass] Application.Quit() 차단 ({reason}) — 오프라인 실행 유지. 다시 종료하려면 잠시 뒤 메뉴에서 종료하세요.");
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(StoryManager), nameof(StoryManager.IsPrologueFirstHalfRead), MethodType.Getter)]
 internal static class StoryManager_IsPrologueFirstHalfRead_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = true;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(StoryManager), nameof(StoryManager.IsPrologueSecondHalfRead), MethodType.Getter)]
 internal static class StoryManager_IsPrologueSecondHalfRead_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = true;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(StoryManager), nameof(StoryManager.IsStoryRead))]
 internal static class StoryManager_IsStoryRead_Patch
 {
     private static bool Prefix(ref bool __result)
     {
+        if (!Offline.Enabled) return true;
         __result = true;
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(TitleDirector), nameof(TitleDirector.LoadPrologueScene))]
 internal static class TitleDirector_LoadPrologueScene_Patch
 {
@@ -716,6 +799,7 @@ internal static class TitleDirector_LoadPrologueScene_Patch
 
     private static bool Prefix(TitleDirector __instance, ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -738,16 +822,19 @@ internal static class TitleDirector_LoadPrologueScene_Patch
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(TutorialLauncher), nameof(TutorialLauncher.Enter))]
 internal static class TutorialLauncher_Enter_Patch
 {
     private static bool Prefix()
     {
+        if (!Offline.Enabled) return true;
         Core.Log.Msg("[SteamBypass] TutorialLauncher.Enter 차단 (튜토리얼 스킵)");
         return false;
     }
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(StorySequenceDirector), nameof(StorySequenceDirector.AskTutorialAndProceed))]
 internal static class StorySequenceDirector_AskTutorialAndProceed_Patch
 {
@@ -755,6 +842,7 @@ internal static class StorySequenceDirector_AskTutorialAndProceed_Patch
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {
@@ -772,6 +860,7 @@ internal static class StorySequenceDirector_AskTutorialAndProceed_Patch
     private static UniTask CompletedTask() => UniTask.CompletedTask;
 }
 
+[OfflineOnly]
 [HarmonyPatch(typeof(StorySequenceDirector), nameof(StorySequenceDirector.LoadTutorialScene))]
 internal static class StorySequenceDirector_LoadTutorialScene_Patch
 {
@@ -779,6 +868,7 @@ internal static class StorySequenceDirector_LoadTutorialScene_Patch
 
     private static bool Prefix(ref UniTask __result)
     {
+        if (!Offline.Enabled) return true;
         if (HookGuard.IsDisabled(Hook)) return true;
         try
         {

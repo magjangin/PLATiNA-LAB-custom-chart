@@ -520,6 +520,29 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 | C18-3 | `BmsConverter.Parse` | `#SETRANDOM n`의 지정 분기 값 `n`을 무시하고 항상 1 고정, 디렉티브가 `StartsWith`라 접두사가 겹치는 비표준 헤더 오인 가능, `headerOnly` 스캔 시 `#RANDOM` 경고 중복 출력 | `#SETRANDOM n` 분기 값 반영, 공백/탭/줄끝 경계 검사(`IsDirective`), `headerOnly` 경고 생략 + 회귀 테스트(`BmsSetRandom`) 추가 |
 | U18-1 | `SafePatcher.cs` | 17차 클라우드 커밋(`4d32c8c`)에 `using MelonLoader;`가 빠져 `[assembly: HarmonyDontPatchAll]` 컴파일 오류(CS0246), `ApplyAll` 중복 호출 가드 없음 | `using MelonLoader;` 추가, `s_applied` 가드 및 `harmony`/`assembly` null 방어 추가 |
 
+## 19차 (2026-11-25): 오프라인 독립 실행 커밋(decf3b7) 감사 → v1.4.0
+
+대상: 18차 이후 들어온 `decf3b7`(스팀/서버 우회·커튼 패치, 1,067줄)과 그 영향을 받은 기존 경로. 나머지 파일은 18차 결과 위에서 재확인.
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (신규 `[Offline]`·`JsonMapFile`·`SongOwnership` 포함). `[Offline]`은 게이트 한 줄을 일부러 지운 빌드로 실패하는 것까지 확인(변이 테스트). **인게임 실기는 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C19-1 | `SteamBypassPatches` 전체 (38개 클래스) | 우회가 게이트 없이 모든 사용자에게 적용: 스팀으로 정상 실행해도 SDK 초기화·로그인이 생략되고 서버 오류 팝업이 숨겨졌다 | `Offline.Enabled`(config `OfflineMode`, 기본 0, 시작 시 한 번 읽음)일 때만 동작. 하네스 `[Offline]`이 게이트 누락·`[OfflineOnly]` 누락을 잡는다 |
+| C19-2 | `SongInfo.IsAvailable/IsNotOwned/IsLock/IsNewSongMarkTarget` | 커스텀 곡 확인을 지워 모든 공식 곡을 무조건 해금 — 소유하지 않은 유료 DLC 곡까지 열림 (게임에 `DlcProductIdCollection` 존재) | 커스텀 곡만 고정값. 공식 곡은 온라인에서 원본 결과를 `SongOwnership`(`UserData\PLATiNALAB\song_ownership.json`)에 기록하고, 오프라인에서는 기록값 재현·기록 없으면 잠김 |
+| C19-3 | `OfflineSession` `RequestGameStart`/`RenewGameSession`/`SendGameEnd` | 공식 곡도 항상 로컬 처리 → 온라인 사용자의 공식 곡 기록이 서버로 가지 않음. `CustomSongsAllowed` 확인 삭제, `SendGameEnd` 훅이 꺼지면 커스텀 곡 결과가 서버로 갈 수 있게 됨(`LastStarted` 판정 삭제 — 11차 수정의 회귀) | 공식 곡 로컬 처리는 `OfflineMode=1`일 때만. 커스텀 곡 판정·`LastStarted` 폴백·`CustomSongsAllowed` 확인 복원 |
+| C19-4 | `Application.Quit` Prefix | 무조건 `false` → 게임 메뉴의 종료가 동작하지 않음 | 오프라인 모드에서 로그인 완료 전이거나 오류 팝업을 막은 뒤 15초 안일 때만 막음 (`Offline.ShouldBlockQuit`) |
+| C19-5 | 오프라인 프로필 | 제작자의 스팀 ID·닉네임이 공개 DLL에 하드코딩 | `OfflineUserId`/`OfflineNickname` 설정 (기본 `PLAYER`) |
+| C19-6 | `CurtainBypassPatches` | 온라인에서도 커튼을 강제로 끔(원본 연출 손상 가능). `DetailViewerManager.SetSong`(곡을 넘길 때마다)마다 씬 전체 `FindObjectsOfType` 2회 — 선곡 스크롤 병목 | 커튼 정리는 오프라인 모드만. `SetSong` 경로는 마지막 정리 후 1초 안이면 건너뜀. `SectionController.Initialize`(커스텀 패턴 방어)는 유지 |
+| C19-7 | 소유 기록 훅의 곡 ID 읽기 (신규 코드 병목 방지) | 판정 게터는 곡마다 여러 번 불려, 게터(`il2cpp_runtime_invoke`+문자열 할당)로 ID를 읽으면 곡 수만큼 비용이 쌓임 | `CustomSongs.ReadSongIdCached`: 백킹 필드의 IL2CPP 문자열 포인터로 캐시, 포인터가 같아도 내용 재비교(할당 없음)로 주소 재사용 오인 방지, 자체 검증 32건은 게터와 대조. 저장은 변경 3초 뒤 메인 스레드에서 한 번 + 종료 시 |
+| C19-8 | `song_ids.json` 읽기·쓰기 | 손상 복구·교체 저장 로직이 `CustomSongs`에만 있어 새 파일에 재사용 불가 | `JsonMapFile`로 공용화(하네스 회귀 테스트: `.bak` 생성, `.corrupt` 보관 후 복구, 백업까지 손상 시 초기화, 최소값 필터) |
+| C19-9 | `SongOwnershipStore` 생성자 (하네스가 찾은 신규 코드 결함) | 범위 밖 비트만 있는 항목이 빈 기록으로 남음 | 마스킹 후 0이면 버림 |
+
+설계 결정 (소유자 확인, 2026-11-25): 오프라인 모드는 옵트인, 공식 곡 소유 판정은 온라인 기록 재현. 소유하지 않은 유료 곡을 여는 기능은 공개 릴리즈에 넣지 않는다.
+
+확인 항목 (인게임):
+- `OfflineMode=0` + 스팀: 로그인·공식 곡 기록 전송·메뉴 종료가 원본대로인지, 선곡 화면을 연 뒤 종료하면 `song_ownership.json`이 생기는지, 선곡 스크롤 체감 속도(소유 기록 Postfix 추가).
+- `OfflineMode=1`: 스팀 없이 시작 → 보유 곡만 열림, 미보유 곡 잠김, 결과 화면, 커튼 정리, 메뉴 종료(로그인 후·오류 15초 후) 동작.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

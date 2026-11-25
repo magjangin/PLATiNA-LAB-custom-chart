@@ -366,6 +366,51 @@ internal static class CustomSongs
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("EncryptedBool")]
     internal static Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool EncryptedFalse() => false;
 
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("EncryptedBool")]
+    internal static Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool EncryptedOf(bool value) => value;
+
+    [MethodImpl(MethodImplOptions.NoInlining), Guarded("EncryptedBool")]
+    internal static bool DecodeEncrypted(Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool value) => value;
+
+    private static readonly object s_idCacheLock = new();
+    private static readonly Dictionary<IntPtr, string> s_idByNativeString = new();
+
+    /// <summary>
+    /// 공식 곡 소유 기록(SongOwnership)용 곡 ID 읽기. 선곡 화면은 곡마다 판정 게터를 여러 번 부르므로
+    /// 게터(il2cpp_runtime_invoke + 문자열 할당) 대신 백킹 필드의 IL2CPP 문자열 포인터로 캐시한다.
+    /// 같은 포인터라도 내용을 다시 비교(할당 없음)해, 객체가 해제된 뒤 주소가 재사용돼도 다른 곡 ID를 돌려주지 않는다.
+    /// 자체 검증(처음 32건)이 끝나기 전이나 필드를 못 찾으면 게터를 쓴다.
+    /// </summary>
+    public static string ReadSongIdCached(SongInfo song)
+    {
+        if (song is null || HookGuard.IsDisabled(SongIdHook)) return null;
+        try
+        {
+            if (!s_songIdField.TryReadPointer(song.Pointer, out var idPtr)) return ReadSongId(song);
+            if (s_songIdField.NeedsSelfCheck)
+            {
+                var managed = ReadSongId(song);
+                s_songIdField.ReportCheck(NativeStrings.EqualsManaged(idPtr, managed), $"'{managed}'");
+                return managed;
+            }
+            if (idPtr == IntPtr.Zero) return null;
+            lock (s_idCacheLock)
+                if (s_idByNativeString.TryGetValue(idPtr, out var cached) && NativeStrings.EqualsManaged(idPtr, cached)) return cached;
+            var id = Il2CppInterop.Runtime.IL2CPP.Il2CppStringToManaged(idPtr);
+            lock (s_idCacheLock)
+            {
+                if (s_idByNativeString.Count >= 8192) s_idByNativeString.Clear(); // 카탈로그 재생성이 반복돼도 무한히 자라지 않게
+                s_idByNativeString[idPtr] = id;
+            }
+            return id;
+        }
+        catch (Exception e)
+        {
+            HookGuard.Fail(SongIdHook, e, required: true);
+            return null;
+        }
+    }
+
     public static void Scan()
     {
         Directory.CreateDirectory(RootDir);
@@ -540,63 +585,14 @@ internal static class CustomSongs
     /// <summary>
     /// 곡 번호 영속화 파일을 읽는다. 본 파일이 손상됐으면 직전 저장본(.bak)으로 복구하고, 손상 파일은 .corrupt로 옮겨 남긴다.
     /// 예전에는 읽기 실패 시 빈 맵으로 시작해 곧바로 덮어써서, 저장 도중 종료 한 번으로 모든 곡의 hwa_NNN·PatternIndex가 다시 매겨졌다.
+    /// 읽기·교체 저장은 song_ownership.json과 같은 JsonMapFile을 쓴다 (19차 감사에서 공용화).
     /// </summary>
-    private static Dictionary<string, int> LoadSongIdMap()
-    {
-        var path = SongIdMapPath;
-        if (TryReadSongIdMap(path, out var map, out var error)) return map;
-        Core.Log.Warning($"[CustomSongs] song_ids.json 읽기 실패: {error}");
-        try { File.Move(path, path + ".corrupt", overwrite: true); }
-        catch (Exception e) { Core.Log.Warning($"[CustomSongs] 손상된 song_ids.json 보관 실패: {e.Message}"); }
-        if (TryReadSongIdMap(path + ".bak", out map, out _) && map.Count > 0)
-        {
-            Core.Log.Warning($"[CustomSongs] song_ids.json.bak에서 곡 번호 {map.Count}개를 복구했습니다 (손상 파일: song_ids.json.corrupt)");
-            SaveSongIdMap(map); // 본 파일을 바로 되살린다 (새 곡이 없으면 Scan이 저장하지 않아 다음 실행에서 또 번호를 매기게 된다)
-            return map;
-        }
-        Core.Log.Warning("[CustomSongs] 복구할 백업이 없어 곡 번호를 새로 매깁니다 (손상 파일: song_ids.json.corrupt)");
-        return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    /// <summary>파일이 없으면 빈 맵으로 성공. 내용이 깨졌으면 false.</summary>
-    private static bool TryReadSongIdMap(string path, out Dictionary<string, int> map, out string error)
-    {
-        map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        error = null;
-        try
-        {
-            if (!File.Exists(path)) return true;
-            var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(path));
-            if (parsed != null)
-                foreach (var (k, v) in parsed)
-                    if (!string.IsNullOrEmpty(k) && v > 0) map[k] = v;
-            return true;
-        }
-        catch (Exception e)
-        {
-            error = e.Message;
-            return false;
-        }
-    }
+    private static Dictionary<string, int> LoadSongIdMap() =>
+        JsonMapFile.LoadWithRecovery(SongIdMapPath, w => Core.Log.Warning($"[CustomSongs] {w}"), out _, minValue: 1);
 
     /// <summary>임시 파일에 쓴 뒤 교체한다 (도중 종료로 본 파일이 잘리지 않게). 직전 본은 .bak으로 남는다.</summary>
-    private static void SaveSongIdMap(Dictionary<string, int> map)
-    {
-        try
-        {
-            var path = SongIdMapPath;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var json = System.Text.Json.JsonSerializer.Serialize(map, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            var tmp = path + ".tmp";
-            File.WriteAllText(tmp, json);
-            if (File.Exists(path)) File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true);
-            else File.Move(tmp, path);
-        }
-        catch (Exception e)
-        {
-            Core.Log.Warning($"[CustomSongs] song_ids.json 저장 실패: {e.Message}");
-        }
-    }
+    private static void SaveSongIdMap(Dictionary<string, int> map) =>
+        JsonMapFile.Write(SongIdMapPath, map, w => Core.Log.Warning($"[CustomSongs] {w}"));
 
     private static void MarkInjected(IntPtr list, int count)
     {

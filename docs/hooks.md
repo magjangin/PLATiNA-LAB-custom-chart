@@ -25,10 +25,10 @@ Unity 6 (`6000.3.25f1`) IL2CPP 기반 어셈블리(`Il2CppPlatinaLab.Main.dll`, 
 | `CategoryCacheFactory` | `CreateAll()` | Postfix (`CustomSongPatches.cs`) | 선곡 화면에 `custom` 카테고리 탭 추가 |
 | `SongCategoryResourceCollection` | `GetDataSet(string)` | Postfix (`CustomSongPatches.cs`) | `custom` 카테고리 UI 리소스 세트 생성 (`CreateDirect` + 리플렉션 폴백) |
 | `SongInfo` | **`IsHiddenFromDefaultList`** (Getter, **필수**) | Prefix (`CustomSongPatches.cs`) | 커스텀 곡 숨김 해제 (`false`) |
-| `SongInfo` | **`IsAvailable()`** (**필수**) | Prefix (`CustomSongPatches.cs`) | 커스텀 곡 플레이 가능 처리 (`true`) |
-| `SongInfo` | **`IsNotOwned()`** (**필수**) | Prefix (`CustomSongPatches.cs`) | 커스텀 곡 미보유 차단 우회 (`false`) |
-| `SongInfo` | **`IsLock()`** (**필수**) | Prefix (`CustomSongPatches.cs`) | 커스텀 곡 잠금 해제 (`EncryptedBool` `false`) |
-| `SongInfo` | **`IsNewSongMarkTarget()`** (**필수**) | Prefix (`CustomSongPatches.cs`) | 커스텀 곡 신규 마크 조회 예외 방지 (`EncryptedBool` `false`) |
+| `SongInfo` | **`IsAvailable()`** (**필수**) | Prefix + Postfix (`CustomSongPatches.cs`) | 커스텀 곡 `true`. 공식 곡: 온라인이면 원본 결과를 `SongOwnership`에 기록, `OfflineMode=1`이면 기록값 재현(없으면 `false`) |
+| `SongInfo` | **`IsNotOwned()`** (**필수**) | Prefix + Postfix (`CustomSongPatches.cs`) | 커스텀 곡 `false`. 공식 곡: 온라인 기록 / 오프라인 재현(없으면 `true` = 미보유) |
+| `SongInfo` | **`IsLock()`** (**필수**) | Prefix + Postfix (`CustomSongPatches.cs`) | 커스텀 곡 `EncryptedBool false`. 공식 곡: 온라인 기록 / 오프라인 재현(없으면 잠김) |
+| `SongInfo` | **`IsNewSongMarkTarget()`** (**필수**) | Prefix (`CustomSongPatches.cs`) | 커스텀 곡과 `OfflineMode=1`의 공식 곡은 `EncryptedBool false` (서버 NEW 정보 없음), 온라인 공식 곡은 원본 |
 | `PatternInfo` | `GetPatternFileName()` | Postfix (`CustomSongPatches.cs`) | 커스텀 패턴의 리소스 파일명을 기반 패턴 파일명으로 반환 |
 | `PatternPlayer` | `DetermineRunning()` | Prefix + Finalizer (`CustomSongPatches.cs`) | 커스텀 곡에서 차트 끝(`DurationMicroSec - 3s`)까지 클리어 연출 보류 |
 
@@ -49,9 +49,9 @@ Unity 6 (`6000.3.25f1`) IL2CPP 기반 어셈블리(`Il2CppPlatinaLab.Main.dll`, 
 
 | 클래스 | 메서드 | 패치 위치 / 파일 | 역할 |
 | :--- | :--- | :--- | :--- |
-| `InGameSurface` | **`RequestGameStart(int)`** (**필수**) | Prefix (`OfflineSession.cs`) | 커스텀 패턴 시작 시 서버 호출 차단 및 로컬 세션 발급 |
-| `InGameSurface` | **`RenewGameSession(string)`** (**필수**) | Prefix (`OfflineSession.cs`) | 로컬 세션 토큰 갱신 요청을 로컬 성공 응답으로 처리 |
-| `InGameSurface` | **`SendGameEnd(GameEndResult, PatternInfo)`** (**필수**) | Prefix (`OfflineSession.cs`) | 커스텀 곡 결과 서버 전송 차단, `AccuracyV2Formula`/`MasteryV2Formula`로 로컬 결과 생성 |
+| `InGameSurface` | **`RequestGameStart(int)`** (**필수**) | Prefix (`OfflineSession.cs`) | 커스텀 패턴(및 `OfflineMode=1`의 모든 패턴) 시작 시 서버 호출 차단 및 로컬 세션 발급 |
+| `InGameSurface` | **`RenewGameSession(string)`** (**필수**) | Prefix (`OfflineSession.cs`) | 로컬 세션 토큰(또는 `OfflineMode=1`)의 갱신 요청을 로컬 성공 응답으로 처리 |
+| `InGameSurface` | **`SendGameEnd(GameEndResult, PatternInfo)`** (**필수**) | Prefix (`OfflineSession.cs`) | 커스텀 곡(및 `OfflineMode=1`의 모든 곡) 결과 서버 전송 차단, `AccuracyV2Formula`/`MasteryV2Formula`로 로컬 결과 생성. 훅이 꺼져도 `LastStarted`가 커스텀이면 서버로 보내지 않음 |
 | `PlayDirector` | `Exit(bool)` | Prefix + Postfix (`OfflineSession.cs`) | 곡 나가기 시 오버레이·오토 플레이·현재 곡 상태 정리 |
 
 ---
@@ -83,7 +83,24 @@ Unity 6 (`6000.3.25f1`) IL2CPP 기반 어셈블리(`Il2CppPlatinaLab.Main.dll`, 
 
 ---
 
-## 7. 초기 분석 후 사용하지 않은 후보 (참고)
+## 7. 오프라인 독립 실행 모드 (`OfflineMode=1`일 때만, `[OfflineOnly]`)
+
+모든 Prefix/Postfix 첫 줄에서 `Offline.Enabled`(시작 시 한 번 읽은 값)를 확인하고, 꺼져 있으면 게임 원본을 그대로 실행한다. 하네스 `[Offline]`이 빌드된 DLL의 IL에서 이 확인이 있는지, 스팀·플랫폼 타입을 겨냥한 패치에 `[OfflineOnly]`가 붙었는지 검사한다.
+
+| 대상 | 패치 / 파일 | 역할 |
+| :--- | :--- | :--- |
+| `SteamAPI.Init` / `InitEx` / `RestartAppIfNecessary` / `IsSteamRunning` / `RunCallbacks`, `SteamUser.GetSteamID` / `BLoggedOn` / `GetAuthTicketForWebApi`, `InteropHelp.TestIfAvailableClient`, `Platform.PlatformUserId` / `GetAuthToken` | Prefix (`SteamBypassPatches.cs`) | 스팀 클라이언트 없이 SDK 초기화·사용자 ID 성공 처리 (`OfflineUserId`) |
+| `LoginProcedure.LoginAndLoadProfile`, `LoginInitialize.Init`, `LoginSurface.LoginSteam`, `UserSurface.GetUserProfile` / `GetUnlockedFeatures`, `ContentsSurface.GetContentsAvailability` | Prefix (`SteamBypassPatches.cs`) | 로그인 성공 + `RuntimeDatabase` 오프라인 프로필(`OfflineNickname`), 해금 기능·카탈로그 권한 빈 응답. 로그인 완료 시 `Offline.NoteBootCompleted` |
+| `RewardManager.Load` / `FetchAllUnlockStates`, `PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI`, `SocialSurface.GetScoreRecordsOfFocusedUsers` / `GetFollowingList` | Prefix (`SteamBypassPatches.cs`) | 보상·소셜 API를 완료된 빈 결과로 (무한 대기 방지) |
+| `HttpRequestInterceptor.IsCriticalError` / `HandleCriticalError`, `ErrorDialogCollection.FatalAPIServerError` / `APIServerError` / `ShowErrorForCode`(int·SurfaceResult) / `ShowNotLoggedInDialogAndRestart` / `ShowMaintenanceDialogAndQuit` | Prefix (`SteamBypassPatches.cs`) | 서버 오류 팝업·재시작·종료 차단. 막을 때마다 `Offline.NoteBlockedError` |
+| `Application.Quit()` | Prefix (`SteamBypassPatches.cs`) | `Offline.ShouldBlockQuit`: 로그인 완료 전이거나 오류 차단 후 15초 안일 때만 막는다 (사용자의 메뉴 종료는 허용) |
+| `StoryManager.IsPrologueFirstHalfRead` / `IsPrologueSecondHalfRead` / `IsStoryRead`, `TitleDirector.LoadPrologueScene`, `TutorialLauncher.Enter`, `StorySequenceDirector.AskTutorialAndProceed` / `LoadTutorialScene` | Prefix (`SteamBypassPatches.cs`) | 프롤로그·튜토리얼 건너뛰기 |
+| `AiringCurtainController.Leave`, `FadingCurtainController.Leave`, `SongSelectDirector.Awake` / `OnSceneVisible`, `DetailViewerManager.SetSong` | Postfix (`CurtainBypassPatches.cs`) | 닫힌 채 남은 `ACCESSING..` 커튼 비활성화. `SetSong` 경로는 1초에 한 번만 씬 전체를 찾는다 |
+| `SectionController.Initialize` | Prefix (`CurtainBypassPatches.cs`, 모드 무관) | 커스텀 패턴(섹션 캐시 없음)은 초기화를 건너뛴다 |
+
+---
+
+## 8. 초기 분석 후 사용하지 않은 후보 (참고)
 
 - `PatternPlayer.SetMainTrackToPlay` / `PreviewSoundController` 로더 / `SoundData..ctor`: 패치 미발동 또는 IL2CPP 백엔드 초기화 실패 → `SoundData.FromHEAudioClip`으로 대체.
 - `PlayDirector.LoadGame`: `LoadTargetPattern`에 인라인되어 미발동 → `IResourceLocator.Locate` 키 치환으로 대체.

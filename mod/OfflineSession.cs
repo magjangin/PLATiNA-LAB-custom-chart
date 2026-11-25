@@ -13,8 +13,9 @@ namespace PLATiNALAB.Mod;
 
 /// <summary>
 /// 커스텀 곡은 서버에 없는 패턴 번호라 RequestGameStart가 "서버와의 통신 과정에서 오류" 팝업으로 거부된다.
-/// 커스텀 패턴일 때만 서버 호출을 건너뛰고 로컬에서 완료된 UniTask를 돌려준다.
-/// 점수는 서버로 보내지 않는다 (원곡/랭킹 오염 방지).
+/// 커스텀 패턴이면 서버 호출을 건너뛰고 로컬에서 완료된 UniTask를 돌려준다. 점수는 서버로 보내지 않는다 (원곡/랭킹 오염 방지).
+/// OfflineMode=1(<see cref="Offline.Enabled"/>)이면 공식 곡도 같은 로컬 경로를 탄다 (서버가 없는 독립 실행).
+/// OfflineMode=0이면 공식 곡은 게임 원본대로 서버와 통신한다 (decf3b7에서 무조건 로컬로 바뀌었던 것을 19차 감사에서 되돌림).
 /// </summary>
 internal static class OfflineSession
 {
@@ -36,7 +37,18 @@ internal static class InGameSurface_RequestGameStart_Patch
         CustomSongs.Current = chart;
         CustomSongs.LastStarted = chart; // 로컬 세션을 못 만들어도 커스텀 곡 결과는 서버로 보내지 않도록 기록
         PatternPlayer_DetermineRunning_HoldEnd_Patch.ResetCache(); // 같은 PatternPlayer를 다시 써도(재도전 등) 새 곡 기준으로 다시 정한다
-        if (HookGuard.IsDisabled(Hook)) return true;
+        if (chart == null)
+        {
+            // 공식 곡: 온라인이면 원본(서버). 오프라인이면 아래 로컬 세션.
+            if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return true;
+        }
+        else if (!ModHealth.CustomSongsAllowed || HookGuard.IsDisabled(Hook))
+        {
+            // 서버 우회가 안 되는 상태: 원본으로 넘긴다 (서버가 없는 패턴 번호를 거부하고 오류 팝업, 기록은 남지 않음)
+            CustomSongs.Current = null;
+            Core.Log.Error($"[OfflineSession] 커스텀 곡 로컬 세션을 만들 수 없는 상태라 원본 경로로 넘깁니다 (pattern {patternId})");
+            return true;
+        }
 
         try
         {
@@ -75,7 +87,8 @@ internal static class InGameSurface_RenewGameSession_Patch
 
     private static bool Prefix(string gameToken, ref UniTask<SurfaceResult> __result)
     {
-        if (HookGuard.IsDisabled(Hook)) return true;
+        // 로컬 세션 토큰이거나 오프라인 모드일 때만 (온라인 공식 곡의 세션 갱신은 서버로)
+        if ((gameToken != OfflineSession.Token && !Offline.Enabled) || HookGuard.IsDisabled(Hook)) return true;
         try
         {
             __result = RenewLocal();
@@ -103,7 +116,23 @@ internal static class InGameSurface_SendGameEnd_Patch
     /// </summary>
     private static bool Prefix(GameEndResult request, PatternInfo patternInfo, ref UniTask<SurfaceResult<FreeModePlayRecordV2>> __result)
     {
-        if (HookGuard.IsDisabled(Hook)) return true;
+        // 패턴 번호를 못 읽으면 커스텀인지 모른다 → 방금 시작한 곡이 커스텀이었다면 서버로 보내지 않는다.
+        // Current는 PlayDirector.Exit 등 정리에서 먼저 지워질 수 있어(호출 순서 미실측) 지우지 않는 LastStarted로 판정한다.
+        // 한 번 꺼진 뒤에는 IsCustom을 다시 시도하지 않아 일반 곡 결과 전송마다 예외가 반복되지 않는다.
+        // (decf3b7에서 이 판정이 빠져, 훅이 꺼지면 커스텀 곡 결과가 서버로 갈 수 있었다 → 19차 감사에서 복원)
+        bool custom;
+        if (HookGuard.IsDisabled(Hook)) custom = CustomSongs.LastStarted != null;
+        else
+        {
+            try { custom = CustomSongs.IsCustom(patternInfo); }
+            catch (Exception e)
+            {
+                HookGuard.Fail(Hook, e, required: true);
+                custom = CustomSongs.LastStarted != null;
+            }
+        }
+        // 온라인 공식 곡은 원본(서버 전송). 오프라인 모드면 공식 곡도 로컬 결과.
+        if (!custom && (!Offline.Enabled || HookGuard.IsDisabled(Hook))) return true;
 
         try
         {
@@ -256,7 +285,7 @@ internal static class InGameSurface_SendGameEnd_Patch
         snapshot.RecordPatternScore(0, finalScore);
         snapshot.RecordPatternAccuracy(zeroAccuracy, Il2CppPlatinaLab.Main.Common.Types.Accuracy.CreateFrom(accuracy));
         snapshot.RecordPatternMastery(zeroMastery, Il2CppPlatinaLab.Main.Common.Types.Mastery.CreateFrom(mastery));
-        // 플레이어 전체 P.A.T.C.H.는 커스텀 곡으로 바뀌면 안 되므로 0 → 0 유지
+        // 플레이어 전체 P.A.T.C.H.는 로컬 결과로 바뀌면 안 되므로 0 → 0 유지 (커스텀 곡·오프라인 공식 곡 모두)
         snapshot.RecordTotalMastery(snapshot.PlayedGameMode, zeroMastery, zeroMastery);
     }
 
