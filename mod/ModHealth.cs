@@ -31,6 +31,22 @@ internal static class ModHealth
         "SongInfo.get_IsHiddenFromDefaultList",
     };
 
+    /// <summary>
+    /// OfflineMode=1일 때 하나라도 빠지면 스팀 없이 기동할 수 없는 패치 (20차). 온라인 모드에서는 점검하지 않는다.
+    /// 커스텀 곡과 무관하므로 주입을 끄지 않고, 무엇이 빠졌는지와 대처(OfflineMode=0)를 로그로 알린다.
+    /// 하네스 [Required]가 이 이름들도 실제 [HarmonyPatch] 타깃과 대조한다.
+    /// </summary>
+    private static readonly string[] s_offlineRequiredPatches =
+    {
+        "SteamAPI.Init",
+        "SteamAPI.InitEx",
+        "SteamAPI.RestartAppIfNecessary",
+        "LoginProcedure.LoginAndLoadProfile",
+        "Platform.GetAuthToken",
+        "ErrorDialogCollection.ShowNotLoggedInDialogAndRestart",
+        "Application.Quit",
+    };
+
     private static readonly object s_lock = new();
     private static readonly HashSet<string> s_fired = new();
     private static CustomSong s_playing;
@@ -121,6 +137,8 @@ internal static class ModHealth
             if (locate > 0 && locate < TestedLocateCount)
                 Core.Log.Warning($"[Health] Locate 패치 {locate}건 (검증 빌드 {TestedLocateCount}건). 커스텀 곡 로딩이 멈추면 [KeyRedirect] 로그를 확인하세요.");
 
+            CheckOfflinePatches(patched);
+
             if (missing.Count == 0)
             {
                 Core.Log.Msg($"[Health] 필수 패치 정상 ({s_requiredPatches.Length}종 + Locate {locate}건, 전체 {patched.Count}개 메서드)");
@@ -133,6 +151,19 @@ internal static class ModHealth
             // 점검 자체의 실패로 정상 기능을 막지 않는다
             Core.Log.Warning($"[Health] 필수 패치 점검 실패(주입은 유지): {e.Message}");
         }
+    }
+
+    private static void CheckOfflinePatches(HashSet<string> patched)
+    {
+        if (!Offline.Enabled) return;
+        var missing = new List<string>();
+        foreach (var name in s_offlineRequiredPatches)
+            if (!patched.Contains(name)) missing.Add(name);
+        if (missing.Count == 0)
+            Core.Log.Msg($"[Health] 오프라인 모드 필수 패치 정상 ({s_offlineRequiredPatches.Length}종)");
+        else
+            Core.Log.Error($"[Health] 오프라인 모드 필수 패치 누락: {string.Join(", ", missing)} — 스팀 없이 기동하지 못하거나 로그인에서 멈출 수 있습니다. " +
+                           "게임 업데이트 후라면 모드를 다시 빌드하고, 그 전까지는 config.txt OfflineMode=0으로 스팀에서 실행하세요.");
     }
 
     public static void BeginPlay(CustomSong song)

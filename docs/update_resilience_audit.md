@@ -543,11 +543,32 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 - `OfflineMode=0` + 스팀: 로그인·공식 곡 기록 전송·메뉴 종료가 원본대로인지, 선곡 화면을 연 뒤 종료하면 `song_ownership.json`이 생기는지, 선곡 스크롤 체감 속도(소유 기록 Postfix 추가).
 - `OfflineMode=1`: 스팀 없이 시작 → 보유 곡만 열림, 미보유 곡 잠김, 결과 화면, 커튼 정리, 메뉴 종료(로그인 후·오류 15초 후) 동작.
 
+## 20차 (2026-11-25): v1.4.0 전체 재감사 → v1.4.1
+
+대상: `mod/` 27개 파일 중 19차 신규·변경 경로(`OfflineMode`·`SteamBypassPatches`·`CurtainBypassPatches`·`SongOwnership(Store)`·`JsonMapFile`·`ModHealth`·`CustomSongPatches` 보유 판정)를 정독하고, 나머지는 19차 결과 위에서 핫패스만 재확인.
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[HarmonyPatch]` 71·`[PatchArgs]` 78·`[Required]` 10+7·`[Offline]` 44 포함 전 항목 실패 0). 새 `[Required]` 오프라인 대조는 이름 하나를 일부러 틀린 빌드(`SteamAPI.InitExx`)로 실패하는 것까지 확인(변이 테스트). **인게임 실기는 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C20-1 | `ModHealth` (업데이트 내성) | 필수 패치 점검이 커스텀 곡 경로만 봤다. `OfflineMode=1`에서 스팀 SDK·로그인 우회 패치가 업데이트로 빠지면(SafePatcher가 그 클래스만 건너뜀) 원인 로그 없이 기동 실패·로그인 대기 | `s_offlineRequiredPatches` 7종을 오프라인 모드일 때만 점검해 `[Health] 오프라인 모드 필수 패치 누락` + 대처법(`OfflineMode=0`) 로그. 커스텀 곡 주입은 끄지 않음. 하네스 `[Required]`가 이름 대조 |
+| C20-2 | `Offline.ShouldBlockQuit` (업데이트 내성) | "로그인 완료 전" 판정은 `LoginAndLoadProfile` 우회 성공 또는 `SongSelectDirector.Awake`에서만 풀린다. 업데이트로 두 훅이 모두 꺼지면 메뉴 종료가 영구히 막힘 | 시작 후 180초가 지나면 부팅 완료로 간주 + 경고 로그 |
+| C20-3 | `Application.Quit` | `Quit()`만 패치 — 게임이 `Quit(int)`를 쓰면(또는 업데이트로 바꾸면) 오프라인 실행이 오류로 그대로 꺼짐 | `Application_QuitExitCode_Patch` 추가(같은 정책, `[OfflineOnly]`) |
+| C20-4 | `CurtainBypassManager` (병목) | 19차 스로틀 후에도 선곡 스크롤 중 1초마다 씬 전체 `FindObjectsOfType` 2회 | 직전 정리에서 잔류 커튼 0개면 `s_sceneClean` → 다음 씬 전환 신호(`Awake`·`OnSceneVisible`·`Leave`)까지 `SetSong` 경로 스캔 생략 |
+| C20-5 | `SteamBypassPatches` 로그 (병목) | 오프라인에서는 모든 API 호출이 실패해 더미 응답·오류 팝업 차단 로그가 호출마다 `Latest.log`에 쓰임 (소셜 랭킹은 곡을 넘길 때마다 호출 가능) | 더미 응답 성공 로그 10종은 `Offline.LogOnce`, 오류 팝업 차단 경고 7곳은 `Offline.WarnThrottled`(키당 10초, 생략 건수 표시) |
+| C20-6 | `JsonMapFile.Write` (데이터 내성) | `File.Replace`를 지원하지 않는 볼륨(FAT32·네트워크·일부 동기화 폴더)이나 `.bak` 잠김이면 저장 자체가 실패 → `song_ownership.json`은 3초마다 재시도만 반복 | 실패 시 `.bak` 복사 + 덮어쓰기 이동으로 저장, 경고 로그 |
+
+확인만 하고 고치지 않은 것:
+- `JsonMapFile.TryRead`는 키를 `OrdinalIgnoreCase`로 읽는다. 대소문자만 다른 공식 곡 ID가 있으면 보유 기록이 합쳐질 수 있으나 확인된 사례 없음 — `song_ids.json`(폴더명, Windows 대소문자 무시)과 공용이라 유지.
+- 온라인에서 서버 보유 정보가 오기 전에 판정 게터가 불리면 일시적 값이 기록될 수 있다. 값이 바뀌면 덮어쓰므로 선곡 화면을 한 번 정상 표시한 뒤 종료하면 맞는 값이 남는다(README 권장 순서와 같음).
+- 첫 구현의 `ConcurrentDictionary.GetOrAdd` 람다가 `CS0656`을 냈다 → 람다 없는 형태로 작성 (AGENTS.md Dead Ends에 추가).
+
+확인 항목 (인게임): AGENTS.md §7의 20차 항목.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
 2. 모드를 다시 빌드한다. 이름·시그니처 변경은 대부분 **컴파일 오류**로 드러난다.
-3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `[SafePatcher] … 적용 실패`(17차부터 자동 PatchAll 대신 클래스 단위 적용 — 실패한 클래스 이름이 그대로 나온다)도 검색한다.
+3. `Latest.log`에서 `[Health]` 줄을 본다: 빌드 ID, `GameAssembly.dll` 파일 지문(매니페스트가 거짓일 수 있어 별도 확인), `[Init] ... 실패`, `필수 패치 정상`, Locate 건수 경고. `[HookGuard] 훅 바인딩 사전 점검`(실패한 훅 목록), `[KeyRedirect]`의 패치 목록·`완화 조건` 경고·`네이티브 문자열 검사 자체 검증`, `[Native] ... 자체 검증`/`관리 경로로 전환`, `[SafePatcher] … 적용 실패`(17차부터 자동 PatchAll 대신 클래스 단위 적용 — 실패한 클래스 이름이 그대로 나온다), `OfflineMode=1`이면 `[Health] 오프라인 모드 필수 패치`(20차)도 검색한다.
    - 오프라인으로 먼저 보려면 `tools/interop-harness`에서 `dotnet run -c Release` (게임 실행 불필요, 종료 코드 0이면 통과): 컴파일러 생성 판별 누락·오탐 0, Locate 엄격 조건 3건, `[Guarded]` JIT·`[HarmonyPatch]` 타깃·`[Required]` 실패 0, `[Layout]`·`[Body]`·`[Diag]`·`[NativeField]` 실패 0, `[Reflect]`(리플렉션 폴백 이름이 새 인터롭에서도 찾히는지)·`[GuardKey]` 실패 0을 확인한다. `[Reflect]` 실패는 "직접 경로가 깨졌을 때 받쳐 줄 폴백도 깨졌다"는 뜻이므로 직접 경로가 아직 정상이어도 이름을 고친다. 업데이트로 게임 enum이 struct가 되거나 record가 아니게 되는 등 "재빌드 없이 돌던 모드가 클래스째 깨지는" 변화는 `[Layout]`·`[Body]`가 새 인터롭 기준으로 다시 잡는다.
 4. 검증 기준 빌드를 `ModHealth.TestedBuildId`와 `TestedGameAssemblySize`(= `GameAssembly.dll` 바이트 수)에 갱신한다 (Locate 건수가 바뀌었으면 `TestedLocateCount`도). 하네스 `[Fingerprint]`가 갱신할 값을 출력하고, 갱신 전에는 실패한다. 필수 패치 목록(`s_requiredPatches`)을 바꿨다면 하네스 `[Required]`가 통과하는지도 본다.
 5. 커스텀 곡을 끝까지 플레이한다: 커버/BGM/BGA → 판정 → 결과 화면. 씬 종료 시 `[Health] ... 핵심 훅 호출 정상`을 확인한다.
