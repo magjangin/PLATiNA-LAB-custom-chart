@@ -308,6 +308,25 @@ static class P
                 }
             Console.WriteLine($"[Required] 필수 패치 이름 대조: {required.Length}개 중 실패 {requiredFailed}개");
         }
+        // 20차: OfflineMode=1 필수 패치 목록도 같은 방식으로 대조 (이름이 어긋나면 오프라인 사용자에게 항상 "누락" 오류가 뜬다)
+        var offlineRequired = healthType?.GetField("s_offlineRequiredPatches", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as string[];
+        if (offlineRequired == null)
+        {
+            requiredFailed++;
+            Console.WriteLine("   [FAIL Required] ModHealth.s_offlineRequiredPatches를 찾지 못함");
+        }
+        else
+        {
+            int offlineNameFailed = 0;
+            foreach (var name in offlineRequired)
+                if (!PatchedKeys.Contains(name))
+                {
+                    offlineNameFailed++;
+                    Console.WriteLine($"   [FAIL Required] 오프라인 필수 패치 '{name}'에 대응하는 [HarmonyPatch]가 없음");
+                }
+            requiredFailed += offlineNameFailed;
+            Console.WriteLine($"[Required] 오프라인 필수 패치 이름 대조: {offlineRequired.Length}개 중 실패 {offlineNameFailed}개");
+        }
         int layoutFailed = VerifyFieldLayout(modAsm);
         int bodyFailed = VerifyMethodBodies(modAsm);
         int diagFailed = VerifyDiagnosticTargets(modAsm, interopAsms);

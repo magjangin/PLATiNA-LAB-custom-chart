@@ -87,15 +87,17 @@ Unity 6 (`6000.3.25f1`) IL2CPP 기반 어셈블리(`Il2CppPlatinaLab.Main.dll`, 
 
 모든 Prefix/Postfix 첫 줄에서 `Offline.Enabled`(시작 시 한 번 읽은 값)를 확인하고, 꺼져 있으면 게임 원본을 그대로 실행한다. 하네스 `[Offline]`이 빌드된 DLL의 IL에서 이 확인이 있는지, 스팀·플랫폼 타입을 겨냥한 패치에 `[OfflineOnly]`가 붙었는지 검사한다.
 
+오프라인 필수 패치(`ModHealth.s_offlineRequiredPatches`: `SteamAPI.Init`/`InitEx`/`RestartAppIfNecessary`, `LoginProcedure.LoginAndLoadProfile`, `Platform.GetAuthToken`, `ErrorDialogCollection.ShowNotLoggedInDialogAndRestart`, `Application.Quit`)가 빠지면 `OfflineMode=1`일 때 시작 로그에 `[Health] 오프라인 모드 필수 패치 누락`이 남는다 (커스텀 곡 주입은 끄지 않음). 하네스 `[Required]`가 이 이름도 대조한다 (20차).
+
 | 대상 | 패치 / 파일 | 역할 |
 | :--- | :--- | :--- |
 | `SteamAPI.Init` / `InitEx` / `RestartAppIfNecessary` / `IsSteamRunning` / `RunCallbacks`, `SteamUser.GetSteamID` / `BLoggedOn` / `GetAuthTicketForWebApi`, `InteropHelp.TestIfAvailableClient`, `Platform.PlatformUserId` / `GetAuthToken` | Prefix (`SteamBypassPatches.cs`) | 스팀 클라이언트 없이 SDK 초기화·사용자 ID 성공 처리 (`OfflineUserId`) |
 | `LoginProcedure.LoginAndLoadProfile`, `LoginInitialize.Init`, `LoginSurface.LoginSteam`, `UserSurface.GetUserProfile` / `GetUnlockedFeatures`, `ContentsSurface.GetContentsAvailability` | Prefix (`SteamBypassPatches.cs`) | 로그인 성공 + `RuntimeDatabase` 오프라인 프로필(`OfflineNickname`), 해금 기능·카탈로그 권한 빈 응답. 로그인 완료 시 `Offline.NoteBootCompleted` |
-| `RewardManager.Load` / `FetchAllUnlockStates`, `PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI`, `SocialSurface.GetScoreRecordsOfFocusedUsers` / `GetFollowingList` | Prefix (`SteamBypassPatches.cs`) | 보상·소셜 API를 완료된 빈 결과로 (무한 대기 방지) |
-| `HttpRequestInterceptor.IsCriticalError` / `HandleCriticalError`, `ErrorDialogCollection.FatalAPIServerError` / `APIServerError` / `ShowErrorForCode`(int·SurfaceResult) / `ShowNotLoggedInDialogAndRestart` / `ShowMaintenanceDialogAndQuit` | Prefix (`SteamBypassPatches.cs`) | 서버 오류 팝업·재시작·종료 차단. 막을 때마다 `Offline.NoteBlockedError` |
-| `Application.Quit()` | Prefix (`SteamBypassPatches.cs`) | `Offline.ShouldBlockQuit`: 로그인 완료 전이거나 오류 차단 후 15초 안일 때만 막는다 (사용자의 메뉴 종료는 허용) |
+| `RewardManager.Load` / `FetchAllUnlockStates`, `PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI`, `SocialSurface.GetScoreRecordsOfFocusedUsers` / `GetFollowingList` | Prefix (`SteamBypassPatches.cs`) | 보상·소셜 API를 완료된 빈 결과로 (무한 대기 방지). 성공 로그는 훅마다 한 번(`Offline.LogOnce`) |
+| `HttpRequestInterceptor.IsCriticalError` / `HandleCriticalError`, `ErrorDialogCollection.FatalAPIServerError` / `APIServerError` / `ShowErrorForCode`(int·SurfaceResult) / `ShowNotLoggedInDialogAndRestart` / `ShowMaintenanceDialogAndQuit` | Prefix (`SteamBypassPatches.cs`) | 서버 오류 팝업·재시작·종료 차단. 막을 때마다 `Offline.NoteBlockedError`, 경고 로그는 키마다 10초에 한 번(`Offline.WarnThrottled`) |
+| `Application.Quit()` / `Quit(int)` | Prefix (`SteamBypassPatches.cs`) | `Offline.ShouldBlockQuit`: 로그인 완료 전(시작 후 최대 180초)이거나 오류 차단 후 15초 안일 때만 막는다 (사용자의 메뉴 종료는 허용). `Quit(int)`는 20차 추가 |
 | `StoryManager.IsPrologueFirstHalfRead` / `IsPrologueSecondHalfRead` / `IsStoryRead`, `TitleDirector.LoadPrologueScene`, `TutorialLauncher.Enter`, `StorySequenceDirector.AskTutorialAndProceed` / `LoadTutorialScene` | Prefix (`SteamBypassPatches.cs`) | 프롤로그·튜토리얼 건너뛰기 |
-| `AiringCurtainController.Leave`, `FadingCurtainController.Leave`, `SongSelectDirector.Awake` / `OnSceneVisible`, `DetailViewerManager.SetSong` | Postfix (`CurtainBypassPatches.cs`) | 닫힌 채 남은 `ACCESSING..` 커튼 비활성화. `SetSong` 경로는 1초에 한 번만 씬 전체를 찾는다 |
+| `AiringCurtainController.Leave`, `FadingCurtainController.Leave`, `SongSelectDirector.Awake` / `OnSceneVisible`, `DetailViewerManager.SetSong` | Postfix (`CurtainBypassPatches.cs`) | 닫힌 채 남은 `ACCESSING..` 커튼 비활성화. `SetSong` 경로는 1초에 한 번, 그리고 직전 정리에서 잔류 커튼이 없었으면 다음 씬 전환 신호(`Awake`·`OnSceneVisible`·`Leave`)까지 씬 전체를 찾지 않는다 (20차) |
 | `SectionController.Initialize` | Prefix (`CurtainBypassPatches.cs`, 모드 무관) | 커스텀 패턴(섹션 캐시 없음)은 초기화를 건너뛴다 |
 
 ---

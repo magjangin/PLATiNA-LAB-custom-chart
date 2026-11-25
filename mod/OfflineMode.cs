@@ -31,6 +31,7 @@ internal static class Offline
         Nickname = string.IsNullOrWhiteSpace(ModConfig.OfflineNickname) ? ModConfig.DefaultOfflineNickname : ModConfig.OfflineNickname;
         UserId = string.IsNullOrWhiteSpace(ModConfig.OfflineUserId) ? ModConfig.DefaultOfflineUserId : ModConfig.OfflineUserId;
         Initialized = true;
+        s_initTick = Environment.TickCount64;
         SongOwnership.Load();
         if (Enabled)
             Core.Log.Msg($"[Offline] 오프라인 독립 실행 모드 켜짐 (닉네임 '{Nickname}', 공식 곡 소유 기록 {SongOwnership.Count}곡)");
@@ -46,16 +47,62 @@ internal static class Offline
     private const long QuitBlockWindowMs = 15_000;
     private static long s_lastBlockedErrorTick = long.MinValue / 2;
     private static volatile bool s_bootCompleted;
+    private static long s_initTick;
+
+    /// <summary>
+    /// 로그인 완료 신호(LoginAndLoadProfile 우회·SongSelectDirector.Awake)를 둘 다 못 받는 경우의 안전장치 (20차).
+    /// 게임 업데이트로 두 훅이 모두 꺼지면 s_bootCompleted가 영영 서지 않아 메뉴 종료가 계속 막혔다.
+    /// 시작 후 이 시간이 지나면 부팅이 끝난 것으로 본다.
+    /// </summary>
+    private const long BootTimeoutMs = 180_000;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> s_logged = new();
+
+    /// <summary>
+    /// 같은 우회 로그를 한 번만 남긴다 (20차). 소셜·보상·해금 더미 응답은 선곡 화면에서 곡을 넘길 때마다 불릴 수 있어
+    /// 매번 Msg를 남기면 Latest.log 쓰기가 병목이 된다.
+    /// </summary>
+    public static void LogOnce(string key, string message)
+    {
+        if (s_logged.TryAdd(key, 0)) Core.Log.Msg(message + " (이후 같은 로그 생략)");
+    }
 
     public static void NoteBlockedError() => Interlocked.Exchange(ref s_lastBlockedErrorTick, Environment.TickCount64);
 
     public static void NoteBootCompleted() => s_bootCompleted = true;
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long[]> s_warnState = new();
+
+    /// <summary>
+    /// 오류 팝업 차단 경고를 키마다 10초에 한 번만 남기고, 그 사이 생략한 횟수를 함께 적는다 (20차).
+    /// 오프라인에서는 모든 API 호출이 실패하므로 APIServerError·ShowErrorForCode가 연달아 불린다.
+    /// </summary>
+    public static void WarnThrottled(string key, string message)
+    {
+        const long WindowMs = 10_000;
+        // 람다 GetOrAdd는 Il2Cppmscorlib 참조 환경에서 CS0656(NullableAttribute)을 낸다 → TryGetValue + GetOrAdd(값)
+        if (!s_warnState.TryGetValue(key, out var st)) st = s_warnState.GetOrAdd(key, new long[] { long.MinValue / 2, 0 });
+        long now = Environment.TickCount64;
+        lock (st)
+        {
+            if (now - st[0] < WindowMs) { st[1]++; return; }
+            long skipped = st[1];
+            st[0] = now;
+            st[1] = 0;
+            Core.Log.Warning(skipped > 0 ? $"{message} (직전 10초간 같은 경고 {skipped}건 생략)" : message);
+        }
+    }
+
     public static bool ShouldBlockQuit(out string reason)
     {
         reason = null;
         if (!Enabled) return false;
-        if (!s_bootCompleted) { reason = "로그인 완료 전"; return true; }
+        if (!s_bootCompleted)
+        {
+            if (Environment.TickCount64 - s_initTick < BootTimeoutMs) { reason = "로그인 완료 전"; return true; }
+            s_bootCompleted = true;
+            Core.Log.Warning($"[Offline] 로그인 완료 신호 없이 {BootTimeoutMs / 1000}초가 지나 부팅 완료로 간주합니다 (로그인 우회 훅이 꺼졌는지 [HookGuard]/[SafePatcher] 로그 확인).");
+        }
         long since = Environment.TickCount64 - Interlocked.Read(ref s_lastBlockedErrorTick);
         if (since < QuitBlockWindowMs) { reason = $"서버 오류 우회 {since / 1000}초 후"; return true; }
         return false;

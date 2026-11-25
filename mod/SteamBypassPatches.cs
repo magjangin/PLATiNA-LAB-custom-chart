@@ -242,7 +242,7 @@ internal static class LoginSurface_LoginSteam_Patch
         try
         {
             __result = SuccessResult();
-            Core.Log.Msg("[SteamBypass] LoginSurface.LoginSteam -> 가짜 LoginOutcome 반환");
+            Offline.LogOnce("LoginSurface.LoginSteam", "[SteamBypass] LoginSurface.LoginSteam -> 가짜 LoginOutcome 반환");
             return false;
         }
         catch (Exception e)
@@ -273,7 +273,7 @@ internal static class UserSurface_GetUserProfile_Patch
         try
         {
             __result = SuccessResult();
-            Core.Log.Msg("[SteamBypass] UserSurface.GetUserProfile -> 가짜 UserProfile 반환");
+            Offline.LogOnce("UserSurface.GetUserProfile", "[SteamBypass] UserSurface.GetUserProfile -> 가짜 UserProfile 반환");
             return false;
         }
         catch (Exception e)
@@ -306,7 +306,7 @@ internal static class UserSurface_GetUnlockedFeatures_Patch
         try
         {
             __result = SuccessResult();
-            Core.Log.Msg("[SteamBypass] UserSurface.GetUnlockedFeatures -> 해금 기능 더미 반환");
+            Offline.LogOnce("UserSurface.GetUnlockedFeatures", "[SteamBypass] UserSurface.GetUnlockedFeatures -> 해금 기능 더미 반환");
             return false;
         }
         catch (Exception e)
@@ -337,7 +337,7 @@ internal static class ContentsSurface_GetContentsAvailability_Patch
         try
         {
             __result = SuccessResult();
-            Core.Log.Msg("[SteamBypass] ContentsSurface.GetContentsAvailability -> 성공 가짜 응답 반환");
+            Offline.LogOnce("ContentsSurface.GetContentsAvailability", "[SteamBypass] ContentsSurface.GetContentsAvailability -> 성공 가짜 응답 반환");
             return false;
         }
         catch (Exception e)
@@ -368,7 +368,7 @@ internal static class LoginInitialize_Init_Patch
         try
         {
             __result = CompletedTask();
-            Core.Log.Msg("[SteamBypass] LoginInitialize.Init -> 완료 처리 (오프라인)");
+            Offline.LogOnce("LoginInitialize.Init", "[SteamBypass] LoginInitialize.Init -> 완료 처리 (오프라인)");
             return false;
         }
         catch (Exception e)
@@ -407,7 +407,7 @@ internal static class HttpRequestInterceptor_HandleCriticalError_Patch
         try
         {
             __result = CompletedTask();
-            Core.Log.Warning($"[SteamBypass] HttpRequestInterceptor.HandleCriticalError({errorCode}) 차단 (오프라인 유지)");
+            Offline.WarnThrottled("HttpRequestInterceptor.HandleCriticalError", $"[SteamBypass] HttpRequestInterceptor.HandleCriticalError({errorCode}) 차단 (오프라인 유지)");
             Offline.NoteBlockedError();
             return false;
         }
@@ -435,7 +435,7 @@ internal static class ErrorDialogCollection_FatalAPIServerError_Patch
         try
         {
             __result = CompletedTask();
-            Core.Log.Warning("[SteamBypass] FatalAPIServerError 팝업 차단 (오프라인 유지)");
+            Offline.WarnThrottled("FatalAPIServerError", "[SteamBypass] FatalAPIServerError 팝업 차단 (오프라인 유지)");
             Offline.NoteBlockedError();
             return false;
         }
@@ -457,7 +457,7 @@ internal static class ErrorDialogCollection_APIServerError_Patch
     private static bool Prefix()
     {
         if (!Offline.Enabled) return true;
-        Core.Log.Warning("[SteamBypass] APIServerError 팝업 차단 (오프라인 유지)");
+        Offline.WarnThrottled("APIServerError", "[SteamBypass] APIServerError 팝업 차단 (오프라인 유지)");
         Offline.NoteBlockedError();
         return false;
     }
@@ -476,7 +476,7 @@ internal static class ErrorDialogCollection_ShowErrorForCode_Patch
         try
         {
             __result = CompletedTask();
-            Core.Log.Warning($"[SteamBypass] ShowErrorForCode({errorCode}) 팝업 차단 (오프라인 유지)");
+            Offline.WarnThrottled("ShowErrorForCode", $"[SteamBypass] ShowErrorForCode({errorCode}) 팝업 차단 (오프라인 유지)");
             Offline.NoteBlockedError();
             return false;
         }
@@ -504,7 +504,7 @@ internal static class ErrorDialogCollection_ShowErrorForCode_SurfaceResult_Patch
         try
         {
             __result = CompletedTask();
-            Core.Log.Warning("[SteamBypass] ShowErrorForCode(SurfaceResult) 팝업 차단 (오프라인 유지)");
+            Offline.WarnThrottled("ShowErrorForCode.SurfaceResult", "[SteamBypass] ShowErrorForCode(SurfaceResult) 팝업 차단 (오프라인 유지)");
             Offline.NoteBlockedError();
             return false;
         }
@@ -532,7 +532,7 @@ internal static class ErrorDialogCollection_ShowNotLoggedInDialogAndRestart_Patc
         try
         {
             __result = CompletedTask();
-            Core.Log.Warning("[SteamBypass] ShowNotLoggedInDialogAndRestart 팝업 차단 (오프라인 유지)");
+            Offline.WarnThrottled("ShowNotLoggedInDialogAndRestart", "[SteamBypass] ShowNotLoggedInDialogAndRestart 팝업 차단 (오프라인 유지)");
             Offline.NoteBlockedError();
             return false;
         }
@@ -560,7 +560,7 @@ internal static class ErrorDialogCollection_ShowMaintenanceDialogAndQuit_Patch
         try
         {
             __result = CompletedTask();
-            Core.Log.Warning("[SteamBypass] ShowMaintenanceDialogAndQuit 팝업 차단 (오프라인 유지)");
+            Offline.WarnThrottled("ShowMaintenanceDialogAndQuit", "[SteamBypass] ShowMaintenanceDialogAndQuit 팝업 차단 (오프라인 유지)");
             Offline.NoteBlockedError();
             return false;
         }
@@ -589,7 +589,7 @@ internal static class RewardManager_Load_Patch
         {
             EnsureRewardMap(__instance);
             __result = CompletedTask();
-            Core.Log.Msg("[SteamBypass] RewardManager.Load -> 성공 완료 (오프라인)");
+            Offline.LogOnce("RewardManager.Load", "[SteamBypass] RewardManager.Load -> 성공 완료 (오프라인)");
             return false;
         }
         catch (Exception e)
@@ -632,7 +632,7 @@ internal static class RewardManager_FetchAllUnlockStates_Patch
         try
         {
             __result = CompletedTask();
-            Core.Log.Msg("[SteamBypass] RewardManager.FetchAllUnlockStates -> 성공 완료 (오프라인)");
+            Offline.LogOnce("RewardManager.FetchAllUnlockStates", "[SteamBypass] RewardManager.FetchAllUnlockStates -> 성공 완료 (오프라인)");
             return false;
         }
         catch (Exception e)
@@ -659,7 +659,7 @@ internal static class PersonalAgendaToastBoardFriendsPage_FetchFocusInfoViaAPI_P
         try
         {
             __result = SuccessResult();
-            Core.Log.Msg("[SteamBypass] PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI -> 빈 배열 반환");
+            Offline.LogOnce("PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI", "[SteamBypass] PersonalAgendaToastBoardFriendsPage.FetchFocusInfoViaAPI -> 빈 배열 반환");
             return false;
         }
         catch (Exception e)
@@ -690,7 +690,7 @@ internal static class SocialSurface_GetScoreRecordsOfFocusedUsers_Patch
         try
         {
             __result = SuccessResult();
-            Core.Log.Msg("[SteamBypass] SocialSurface.GetScoreRecordsOfFocusedUsers -> 빈 배열 반환");
+            Offline.LogOnce("SocialSurface.GetScoreRecordsOfFocusedUsers", "[SteamBypass] SocialSurface.GetScoreRecordsOfFocusedUsers -> 빈 배열 반환");
             return false;
         }
         catch (Exception e)
@@ -721,7 +721,7 @@ internal static class SocialSurface_GetFollowingList_Patch
         try
         {
             __result = SuccessResult();
-            Core.Log.Msg("[SteamBypass] SocialSurface.GetFollowingList -> 빈 배열 반환");
+            Offline.LogOnce("SocialSurface.GetFollowingList", "[SteamBypass] SocialSurface.GetFollowingList -> 빈 배열 반환");
             return false;
         }
         catch (Exception e)
@@ -751,6 +751,22 @@ internal static class Application_Quit_Patch
     {
         if (!Offline.ShouldBlockQuit(out var reason)) return true;
         Core.Log.Warning($"[SteamBypass] Application.Quit() 차단 ({reason}) — 오프라인 실행 유지. 다시 종료하려면 잠시 뒤 메뉴에서 종료하세요.");
+        return false;
+    }
+}
+
+/// <summary>
+/// Application.Quit(int) 오버로드도 같은 정책으로 막는다 (20차). 인자 없는 Quit()만 막으면 게임이 종료 코드를 넘기는
+/// 경로로 바꾸거나 이미 그렇게 부르는 경우 오프라인 실행이 그대로 꺼진다.
+/// </summary>
+[OfflineOnly]
+[HarmonyPatch(typeof(UnityEngine.Application), nameof(UnityEngine.Application.Quit), new Type[] { typeof(int) })]
+internal static class Application_QuitExitCode_Patch
+{
+    private static bool Prefix(int exitCode)
+    {
+        if (!Offline.ShouldBlockQuit(out var reason)) return true;
+        Core.Log.Warning($"[SteamBypass] Application.Quit({exitCode}) 차단 ({reason}) — 오프라인 실행 유지. 다시 종료하려면 잠시 뒤 메뉴에서 종료하세요.");
         return false;
     }
 }

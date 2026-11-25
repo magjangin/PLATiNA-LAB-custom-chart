@@ -29,15 +29,24 @@ internal static class CurtainBypassManager
     private const long ThrottleMs = 1_000;
     private static long s_lastScanTick = long.MinValue / 2;
 
+    /// <summary>
+    /// 마지막 전체 정리에서 잔류 커튼이 하나도 없었으면 true (20차). 곡 변경(SetSong) 경로는 이때 스캔하지 않는다 —
+    /// 잔류 커튼은 씬 전환 직후에만 생기므로, 씬 전환 신호(Awake·OnSceneVisible·Leave)가 오면 다시 false가 된다.
+    /// 예전에는 선곡 스크롤 중 1초마다 씬 전체 FindObjectsOfType를 두 번 돌았다.
+    /// </summary>
+    private static volatile bool s_sceneClean;
+
+    public static void MarkSceneChanged() => s_sceneClean = false;
+
     public static void DismissAllCurtains(bool throttled = false)
     {
         if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
         long now = Environment.TickCount64;
-        if (throttled && now - Interlocked.Read(ref s_lastScanTick) < ThrottleMs) return;
+        if (throttled && (s_sceneClean || now - Interlocked.Read(ref s_lastScanTick) < ThrottleMs)) return;
         Interlocked.Exchange(ref s_lastScanTick, now);
         try
         {
-            DismissInternal();
+            s_sceneClean = DismissInternal() == 0;
         }
         catch (Exception e)
         {
@@ -46,8 +55,9 @@ internal static class CurtainBypassManager
     }
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("CurtainBypassManager.Dismiss")]
-    private static void DismissInternal()
+    private static int DismissInternal()
     {
+        int dismissed = 0;
         var airings = UnityEngine.Object.FindObjectsOfType<AiringCurtainController>();
         if (airings is not null)
         {
@@ -58,6 +68,7 @@ internal static class CurtainBypassManager
                 {
                     Core.Log.Msg($"[Curtain] 잔류 AiringCurtain 비활성화: {c.gameObject.name}");
                     c.gameObject.SetActive(false);
+                    dismissed++;
                 }
             }
         }
@@ -72,9 +83,11 @@ internal static class CurtainBypassManager
                 {
                     Core.Log.Msg($"[Curtain] 잔류 FadingCurtain 비활성화: {c.gameObject.name}");
                     c.gameObject.SetActive(false);
+                    dismissed++;
                 }
             }
         }
+        return dismissed;
     }
 }
 
@@ -104,6 +117,7 @@ internal static class AiringCurtainController_Leave_Patch
         {
             Core.Log.Msg("[Curtain] AiringCurtainController.Leave 감지 -> 비활성화 보장");
             instance.gameObject.SetActive(false);
+            CurtainBypassManager.MarkSceneChanged();
         }
     }
 }
@@ -134,6 +148,7 @@ internal static class FadingCurtainController_Leave_Patch
         {
             Core.Log.Msg("[Curtain] FadingCurtainController.Leave 감지 -> 비활성화 보장");
             instance.gameObject.SetActive(false);
+            CurtainBypassManager.MarkSceneChanged();
         }
     }
 }
@@ -162,6 +177,7 @@ internal static class SongSelectDirector_Awake_Patch
     {
         Core.Log.Msg("[Curtain] SongSelectDirector.Awake 감지 -> 커튼 정리");
         Offline.NoteBootCompleted();
+        CurtainBypassManager.MarkSceneChanged();
         CurtainBypassManager.DismissAllCurtains();
     }
 }
@@ -189,6 +205,7 @@ internal static class SongSelectDirector_OnSceneVisible_Patch
     private static void HandleVisible()
     {
         Core.Log.Msg("[Curtain] SongSelectDirector.OnSceneVisible 감지 -> 커튼 정리");
+        CurtainBypassManager.MarkSceneChanged();
         CurtainBypassManager.DismissAllCurtains();
     }
 }

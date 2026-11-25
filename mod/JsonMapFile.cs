@@ -65,8 +65,19 @@ internal static class JsonMapFile
             var json = JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = true });
             var tmp = path + ".tmp";
             File.WriteAllText(tmp, json);
-            if (File.Exists(path)) File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true);
-            else File.Move(tmp, path);
+            if (!File.Exists(path)) File.Move(tmp, path);
+            else
+            {
+                try { File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true); }
+                catch (Exception e) when (e is PlatformNotSupportedException or IOException or UnauthorizedAccessException)
+                {
+                    // File.Replace를 지원하지 않는 볼륨(FAT32·네트워크 드라이브·일부 동기화 폴더)이나 .bak이 잠긴 경우 (20차):
+                    // 백업은 복사로 남기고 본 파일은 덮어쓰기 이동으로 교체한다 (원자성은 약하지만 저장 자체는 성공시킨다).
+                    try { File.Copy(path, path + ".bak", overwrite: true); } catch { /* 백업 실패는 저장을 막지 않는다 */ }
+                    File.Move(tmp, path, overwrite: true);
+                    warn?.Invoke($"{Path.GetFileName(path)}: 교체 저장(File.Replace) 불가 → 덮어쓰기로 저장 ({e.GetType().Name})");
+                }
+            }
             return true;
         }
         catch (Exception e)
