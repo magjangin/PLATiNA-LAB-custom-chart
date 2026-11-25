@@ -15,5 +15,7 @@
     <Compile Include="..\..\mod\EncodingHelper.cs" Link="EncodingHelper.cs" />
     <Compile Include="..\..\mod\BmsConverter.cs" Link="BmsConverter.cs" />
     <Compile Include="..\..\mod\MediaDuration.cs" Link="MediaDuration.cs" />
+    <Compile Include="..\..\mod\JsonMapFile.cs" Link="JsonMapFile.cs" />
+    <Compile Include="..\..\mod\SongOwnershipStore.cs" Link="SongOwnershipStore.cs" />
   </ItemGroup>
 </Project>

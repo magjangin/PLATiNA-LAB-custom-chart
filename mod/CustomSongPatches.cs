@@ -52,48 +52,79 @@ internal static class PatternInfo_GetPatternFileName_Patch
     }
 }
 
+// --- 보유·해금 판정 (모든 곡에서 자주 불림) ---
+// 커스텀 곡: 게임 보유 사전에 없어 원본이 KeyNotFound → 항상 사용 가능·보유·해금.
+// 공식 곡: 온라인(OfflineMode=0)이면 원본 그대로 실행하고 결과를 SongOwnership에 기록한다.
+//          오프라인(OfflineMode=1)이면 서버 보유 정보가 없으므로 기록값을 재현한다 (기록 없으면 잠김).
+// decf3b7은 모든 공식 곡을 무조건 해금해 소유하지 않은 유료 DLC 곡까지 열었다 → 19차 감사에서 기록 재현으로 교체.
+
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsAvailable))]
 internal static class SongInfo_IsAvailable_Patch
 {
-    private static bool Prefix(ref bool __result)
+    private static bool Prefix(SongInfo __instance, ref bool __result, out string __state)
     {
-        __result = true;
-        return false;
+        __state = null;
+        if (CustomSongs.IsCustomSong(__instance)) { __result = true; return false; }
+        return SongOwnership.Prefix(CustomSongs.ReadSongIdCached(__instance), SongOwnershipStore.Available, ref __result, out __state);
     }
+
+    private static void Postfix(bool __result, string __state) => SongOwnership.Record(__state, SongOwnershipStore.Available, __result);
 }
 
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsNotOwned))]
 internal static class SongInfo_IsNotOwned_Patch
 {
-    private static bool Prefix(ref bool __result)
+    private static bool Prefix(SongInfo __instance, ref bool __result, out string __state)
     {
-        __result = false;
-        return false;
+        __state = null;
+        if (CustomSongs.IsCustomSong(__instance)) { __result = false; return false; }
+        return SongOwnership.Prefix(CustomSongs.ReadSongIdCached(__instance), SongOwnershipStore.NotOwned, ref __result, out __state);
     }
+
+    private static void Postfix(bool __result, string __state) => SongOwnership.Record(__state, SongOwnershipStore.NotOwned, __result);
 }
 
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsLock))]
 internal static class SongInfo_IsLock_Patch
 {
-    private static bool Prefix(ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
+    private const string Hook = "EncryptedBool";
+
+    private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result, out string __state)
     {
-        if (HookGuard.IsDisabled("EncryptedBool")) return true;
-        try { __result = CustomSongs.EncryptedFalse(); }
+        __state = null;
+        if (HookGuard.IsDisabled(Hook)) return true;
+        try
+        {
+            if (CustomSongs.IsCustomSong(__instance)) { __result = CustomSongs.EncryptedFalse(); return false; }
+            bool locked = false;
+            if (SongOwnership.Prefix(CustomSongs.ReadSongIdCached(__instance), SongOwnershipStore.Lock, ref locked, out __state)) return true;
+            __result = CustomSongs.EncryptedOf(locked);
+            return false;
+        }
         catch (Exception e)
         {
-            HookGuard.Fail("EncryptedBool", e);
+            HookGuard.Fail(Hook, e);
+            __state = null;
             return true;
         }
-        return false;
+    }
+
+    private static void Postfix(Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result, string __state)
+    {
+        if (__state == null || HookGuard.IsDisabled(Hook)) return;
+        try { SongOwnership.Record(__state, SongOwnershipStore.Lock, CustomSongs.DecodeEncrypted(__result)); }
+        catch (Exception e) { HookGuard.Fail(Hook, e); }
     }
 }
 
 [HarmonyPatch(typeof(SongInfo), nameof(SongInfo.IsNewSongMarkTarget))]
 internal static class SongInfo_IsNewSongMarkTarget_Patch
 {
-    private static bool Prefix(ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
+    /// <summary>커스텀 곡과 오프라인 모드의 공식 곡은 NEW 표시 정보(서버)가 없다 → false. 온라인 공식 곡은 원본.</summary>
+    private static bool Prefix(SongInfo __instance, ref Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool __result)
     {
         if (HookGuard.IsDisabled("EncryptedBool")) return true;
+        if (!Offline.Enabled && !CustomSongs.IsCustomSong(__instance)) return true;
         try { __result = CustomSongs.EncryptedFalse(); }
         catch (Exception e)
         {

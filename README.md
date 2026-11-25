@@ -12,7 +12,8 @@
 - **폴더 기반 커스텀 곡** — `hwa\<곡폴더>\`마다 곡 하나. 제목·아티스트·BPM·난이도·레벨을 `info.txt`로 지정합니다.
 - **미디어 교체** — 커버 이미지, 미리듣기·인게임 BGM(`music.ogg`/`music.wav`), BGA(`video.mp4`)를 교체합니다.
 - **곡 길이 자동 맞춤** — 음원/영상 길이를 읽어 차트 끝 위치를 늘려서, 곡이 끝까지 재생된 뒤 결과 화면으로 넘어갑니다.
-- **오프라인 세션** — 게임 시작·종료 서버 요청을 로컬 처리해서 결과 화면까지 정상 진행됩니다.
+- **오프라인 세션** — 커스텀 곡의 게임 시작·종료 서버 요청을 로컬 처리해서 결과 화면까지 정상 진행됩니다.
+- **오프라인 독립 실행 모드 (선택, 기본 꺼짐)** — `OfflineMode=1`이면 스팀 클라이언트·로그인·게임 서버 없이 실행합니다. 공식 곡의 보유·해금 상태는 스팀으로 온라인 실행했을 때 기록한 값을 그대로 씁니다(보유하지 않은 곡은 열리지 않습니다). 아래 [오프라인 독립 실행 모드](#오프라인-독립-실행-모드) 참고.
 - **기존 곡 차트 덮어쓰기** — 원본 차트를 JSON으로 덤프하고, 수정한 JSON으로 교체할 수 있습니다(핫리로드).
 - **실시간 판정바 & 키뷰어 오버레이** — 세로/가로 판정바, FAST/SLOW ms 오차 표시, 키 입력 반응 키뷰어를 인게임 오버레이로 제공합니다.
 - **오토 플레이 & 올 퍼펙트 지원** — 게임 내장 오토플레이 모드 토글 및 커스텀 곡 전용 올 퍼펙트(PERFECT HIGH) 조작을 지원합니다.
@@ -31,7 +32,7 @@
 ## 설치
 
 1. 게임에 [MelonLoader 0.7.3](https://github.com/LavaGang/MelonLoader/releases)을 설치하고 게임을 한 번 실행합니다(Il2Cpp 어셈블리 생성).
-2. [Releases](https://github.com/magjangin/PLATiNA-LAB-custom-chart/releases)에서 최신 zip을 받아 안의 `Mods\PLATiNALAB.Mod.dll`을 `<게임 폴더>\Mods\`에 넣습니다. (직접 빌드하려면 아래 [빌드](#빌드) 참고)
+2. [Releases](https://github.com/magjangin/PLATiNA-LAB-custom-chart/releases)에서 최신 `PLATiNALAB.Mod.dll`을 받아 `<게임 폴더>\Mods\`에 넣습니다. (직접 빌드하려면 아래 [빌드](#빌드) 참고)
 3. 게임을 실행하면 `<게임 폴더>\hwa\` 폴더와 샘플 곡이 생성됩니다.
 
 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 있습니다. 모드는 특정 게임 빌드에서 검증했으므로, 게임이 업데이트됐다면 [게임이 업데이트됐을 때](#게임이-업데이트됐을-때)를 먼저 보세요.
@@ -57,6 +58,8 @@
 | 노트가 겹친다 / 일부만 나온다 | 로그의 `[BMS]` 줄(레인 매핑, `#RANDOM` 경고)을 확인하고 `info.txt`에 `lanes = 16,11,12,13`처럼 지정하세요. |
 | 설정이 안 먹는다 | `[Config]` 경고(알 수 없는 키, 잘못된 값)를 확인하세요. 곡을 시작할 때마다 다시 읽습니다. |
 | 곡 번호(`hwa_NNN`)가 바뀌었다 | `UserData\PLATiNALAB\song_ids.json`에 폴더 이름별로 저장됩니다. 폴더 이름을 바꾸면 새 곡으로 취급됩니다. |
+| 오프라인 모드에서 공식 곡이 잠겨 있다 | 보유 기록(`UserData\PLATiNALAB\song_ownership.json`)에 없는 곡입니다. `OfflineMode=0`으로 스팀 온라인 실행 후 선곡 화면을 한 번 열면 보유한 곡이 기록됩니다. 로그의 `[Ownership]` 줄을 확인하세요. |
+| 오프라인 모드에서 메뉴 종료가 안 된다 | 로그인 전이나 서버 오류를 막은 직후 15초 동안은 게임이 스스로 꺼지지 않도록 종료를 막습니다(`[SteamBypass] Application.Quit() 차단`). 잠시 뒤 다시 종료하세요. |
 | 원인을 더 자세히 보고 싶다 | `config.txt`에서 `DiagnosticLogs=1`로 켜고 다시 실행하세요. |
 
 ## 커스텀 곡 만들기
@@ -138,9 +141,31 @@ JudgmentBarSide=Center
 EnableKeyViewer=1
 KeyViewerPressedColor=#26BFD9D9
 
+# 오프라인 독립 실행 모드 (기본 0 = 꺼짐, 게임 시작 시에만 읽음)
+OfflineMode=0
+OfflineNickname=PLAYER
+OfflineUserId=76561197960265729
+
 # 진단용 상세 로그 패치 (기본 0 = 꺼짐, 문제 조사 시에만 1)
 DiagnosticLogs=0
 ```
+
+이미 있는 `config.txt`에는 새 키가 자동으로 추가되지 않습니다. 필요한 줄만 직접 추가하세요(없으면 기본값).
+
+## 오프라인 독립 실행 모드
+
+`OfflineMode=1`로 켜고 게임을 다시 시작하면 아래가 동작합니다. 끄면(기본) 스팀·서버는 게임 원본 그대로이고 커스텀 곡만 로컬 처리합니다.
+
+| 항목 | 동작 |
+| --- | --- |
+| 스팀 SDK·로그인 | `SteamAPI.Init` 등과 로그인 절차를 로컬 성공으로 처리합니다. 닉네임·ID는 `OfflineNickname`/`OfflineUserId`. |
+| 게임 기록 | **모든 곡**의 시작·결과를 로컬 처리합니다. 서버로 기록을 보내지 않으므로 공식 랭킹·기록에 남지 않습니다. |
+| 공식 곡 보유·해금 | 온라인(`OfflineMode=0`) 실행 때 게임이 실제로 답한 값을 `UserData\PLATiNALAB\song_ownership.json`에 기록해 두고 그대로 재현합니다. 기록이 없는 곡은 잠긴 상태입니다. |
+| 서버 오류 팝업·강제 종료 | 점검·미로그인·치명적 서버 오류 팝업을 막고, 그 직후 15초와 로그인 전의 `Application.Quit`만 막습니다. 평소 메뉴의 종료는 그대로 됩니다. |
+| 스토리·튜토리얼 | 프롤로그·튜토리얼을 건너뜁니다. |
+| 씬 전환 커튼 | 서버 응답이 없어 닫힌 채 남는 `ACCESSING..` 커튼을 정리합니다. |
+
+권장 순서: 스팀으로 `OfflineMode=0` 실행 → 선곡 화면에서 곡 목록을 한 번 표시 → 게임 종료(기록 저장) → `OfflineMode=1`로 바꾸고 실행.
 
 ## 기존 곡 차트 덮어쓰기
 
@@ -163,11 +188,11 @@ dotnet build mod\PLATiNALAB.Mod.csproj -c Release
 `Core.cs`의 `MelonInfo` 버전과 `CHANGELOG.md`를 먼저 갱신한 뒤 커밋하고:
 
 ```powershell
-.\tools\release.ps1            # 빌드 + 하네스 검증 + dist\ 에 zip 생성
+.\tools\release.ps1            # 빌드 + 하네스 검증
 .\tools\release.ps1 -Publish   # 위 + 태그(v<버전>)와 GitHub 릴리즈 게시 (gh 필요)
 ```
 
-zip에는 모드 DLL, README, CHANGELOG만 들어가며 게임 파일이나 디컴파일 코드는 포함되지 않습니다.
+릴리즈 에셋은 모드 DLL(`PLATiNALAB.Mod.dll`) 하나뿐이며 게임 파일이나 디컴파일 코드는 포함되지 않습니다.
 
 ## 게임이 업데이트됐을 때
 
@@ -177,7 +202,7 @@ zip에는 모드 DLL, README, CHANGELOG만 들어가며 게임 파일이나 디�
 - `필수 패치 누락` 또는 `[HookGuard] ... 훅을 끕니다`: 해당 기능(또는 커스텀 곡 주입)이 자동으로 꺼지고 게임 원본 동작은 유지됩니다. 일반 곡 플레이는 영향이 없도록 설계했습니다.
 - `[Init] ... 실패`: 해당 초기화 단계만 건너뛴 것입니다.
 
-게임 없이 먼저 확인하려면 `tools/interop-harness`에서 `dotnet run -c Release`를 실행하세요 (종료 코드 0 = 통과. 훅 대상·JIT 바인딩·필드 레이아웃·리플렉션 폴백 이름·HookGuard 키까지 확인). 자세한 확인 순서는 [`docs/update_resilience_audit.md`](docs/update_resilience_audit.md)에 있습니다.
+게임 없이 먼저 확인하려면 `tools/interop-harness`에서 `dotnet run -c Release`를 실행하세요 (종료 코드 0 = 통과. 훅 대상·JIT 바인딩·필드 레이아웃·리플렉션 폴백 이름·HookGuard 키·오프라인 전용 패치 게이트까지 확인). 자세한 확인 순서는 [`docs/update_resilience_audit.md`](docs/update_resilience_audit.md)에 있습니다.
 
 ## 저장소 구성
 

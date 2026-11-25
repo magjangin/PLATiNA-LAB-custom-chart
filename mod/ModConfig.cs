@@ -16,6 +16,13 @@ internal static class ModConfig
     public static bool AllPerfect;
     public static bool DiagnosticLogs;
 
+    /// <summary>완전 오프라인 독립 실행 모드 (기본 꺼짐). 시작 시 한 번만 읽는다 — <see cref="Offline"/> 참고.</summary>
+    public static bool OfflineMode;
+    public const string DefaultOfflineNickname = "PLAYER";
+    public const string DefaultOfflineUserId = "76561197960265729";
+    public static string OfflineNickname = DefaultOfflineNickname;
+    public static string OfflineUserId = DefaultOfflineUserId;
+
     public static bool EnableJudgmentBar = true;
     public static bool JudgmentBarVertical = true;
     public static int JudgmentBarShape;
@@ -97,6 +104,18 @@ KeyViewerNormalColor=#141414A6
 # 피치 키를 눌렀을 때 색
 KeyViewerPitchPressedColor=#FF4081E6
 
+# ===== [오프라인] =====
+
+# 완전 오프라인 독립 실행 모드 (1 = 켜짐, 0 = 꺼짐). 게임을 시작할 때만 읽습니다 (바꾸면 게임 재시작).
+# 켜면 스팀 클라이언트·로그인·게임 서버 없이 실행합니다. 모든 곡의 기록이 서버로 가지 않습니다.
+# 공식 곡의 보유·해금 상태는 이 모드를 끈 채(0) 스팀으로 온라인 실행했을 때 기록된 값을 그대로 씁니다
+# (UserData\PLATiNALAB\song_ownership.json). 기록이 없는 곡은 잠긴 상태로 보입니다.
+OfflineMode=0
+
+# 오프라인 모드에서 쓸 닉네임과 사용자 ID(스팀 ID 64비트 숫자)
+OfflineNickname=PLAYER
+OfflineUserId=76561197960265729
+
 # ===== [디버그] =====
 
 # 진단용 상세 로그 패치 활성화 (1 = 켜짐, 0 = 꺼짐)
@@ -132,6 +151,8 @@ DiagnosticLogs=0
             }
             s_lastWriteTicks = ticks;
             if (DiagnosticLogs && Core.Patcher != null) DiagnosticPatches.Apply(Core.Patcher);
+            if (Offline.Initialized && OfflineMode != Offline.Enabled)
+                WarnOnce("offline-restart", $"OfflineMode={(OfflineMode ? 1 : 0)}은(는) 게임을 다시 시작해야 적용됩니다 (지금은 {(Offline.Enabled ? 1 : 0)}).");
             Core.Log.Msg($"[Config] {reason}: AutoPlay={AutoPlay} AllPerfect={AllPerfect} JudgmentBar={EnableJudgmentBar} KeyViewer={EnableKeyViewer}");
         }
         catch (Exception e)
@@ -145,6 +166,9 @@ DiagnosticLogs=0
         AutoPlay = false;
         AllPerfect = false;
         DiagnosticLogs = false;
+        OfflineMode = false;
+        OfflineNickname = DefaultOfflineNickname;
+        OfflineUserId = DefaultOfflineUserId;
         OverlayScale = 1f;
         EnableJudgmentBar = true;
         JudgmentBarVertical = true;
@@ -164,7 +188,13 @@ DiagnosticLogs=0
             case "autoplay": AutoPlay = Bool(key, value, AutoPlay); break;
             case "allperfect": AllPerfect = Bool(key, value, AllPerfect); break;
             case "diagnosticlogs": DiagnosticLogs = Bool(key, value, DiagnosticLogs); break;
-            case "overlayscale": OverlayScale = Float(key, value, OverlayScale, 0.5f, 4f); break;
+            case "offlinemode": OfflineMode = Bool(key, value, OfflineMode); break;
+            case "offlinenickname": OfflineNickname = Text(key, value, DefaultOfflineNickname, 32); break;
+            case "offlineuserid":
+                if (ulong.TryParse(value, out _)) OfflineUserId = value;
+                else WarnOnce($"val:{key}={value}", $"'{key}'의 값 '{value}'은(는) 숫자(스팀 ID 64비트)여야 합니다. 기본값을 사용합니다.");
+                break;
+            case "overlayscale":OverlayScale = Float(key, value, OverlayScale, 0.5f, 4f); break;
             case "enablejudgmentbar": EnableJudgmentBar = Bool(key, value, EnableJudgmentBar); break;
             case "judgmentbarvertical": JudgmentBarVertical = Bool(key, value, JudgmentBarVertical); break;
             case "judgmentbarshape": JudgmentBarShape = Int(key, value, JudgmentBarShape, 0, 2); break;
@@ -189,6 +219,17 @@ DiagnosticLogs=0
             return v;
         WarnOnce($"val:{key}={v}", $"'{key}'의 값 '{v}'이(가) 잘못되었습니다 (Left/Right/Center 중 하나). 기본값 '{fallback}'을 사용합니다.");
         return fallback;
+    }
+
+    private static string Text(string key, string v, string fallback, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(v)) return fallback;
+        if (v.Length > maxLength)
+        {
+            WarnOnce($"range:{key}", $"'{key}'의 값이 {maxLength}자를 넘어 앞 {maxLength}자만 사용합니다.");
+            return v[..maxLength];
+        }
+        return v;
     }
 
     private static bool Bool(string key, string v, bool fallback)

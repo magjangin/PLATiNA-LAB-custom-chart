@@ -15,6 +15,8 @@ internal static class PureLogicTests
             failed += TestBmsConverter(tmp);
             failed += TestEncodingHelper(tmp);
             failed += TestMediaDuration(tmp);
+            failed += TestJsonMapFile(tmp);
+            failed += TestSongOwnershipStore();
         }
         finally
         {
@@ -385,6 +387,70 @@ internal static class PureLogicTests
             failed++;
         }
 
+        return failed;
+    }
+
+    /// <summary>song_ids.json / song_ownership.json 공용 저장: 교체 저장(.bak), 손상 시 .corrupt 보관 후 .bak 복구, 최소값 필터 (19차).</summary>
+    private static int TestJsonMapFile(string tmp)
+    {
+        int failed = 0;
+        var path = Path.Combine(tmp, "map.json");
+        var warnings = new List<string>();
+        void Fail(string msg) { Console.WriteLine($"   [FAIL JsonMapFile] {msg}"); failed++; }
+
+        var first = JsonMapFile.LoadWithRecovery(path, warnings.Add, out var r0, minValue: 1);
+        if (first.Count != 0 || r0 != JsonMapFile.LoadResult.Ok || warnings.Count != 0) Fail($"없는 파일: count={first.Count}, result={r0}, 경고 {warnings.Count}");
+
+        JsonMapFile.Write(path, new Dictionary<string, int> { ["a"] = 1, ["zero"] = 0 }, warnings.Add);
+        JsonMapFile.Write(path, new Dictionary<string, int> { ["a"] = 2, ["b"] = 3 }, warnings.Add);
+        if (!File.Exists(path + ".bak")) Fail("두 번째 저장에서 .bak이 생기지 않음");
+        var loaded = JsonMapFile.LoadWithRecovery(path, warnings.Add, out var r1, minValue: 1);
+        if (r1 != JsonMapFile.LoadResult.Ok || loaded.Count != 2 || loaded["A"] != 2) Fail($"정상 읽기: result={r1}, count={loaded.Count} (대소문자 무시 키 기대)");
+
+        File.WriteAllText(path, "{ broken");
+        var recovered = JsonMapFile.LoadWithRecovery(path, warnings.Add, out var r2, minValue: 1);
+        if (r2 != JsonMapFile.LoadResult.RecoveredFromBackup || recovered.Count != 1 || !recovered.ContainsKey("a"))
+            Fail($"손상 복구: result={r2}, count={recovered.Count} (.bak의 'a'=1만 기대, 0 값은 minValue로 제외)");
+        if (!File.Exists(path + ".corrupt")) Fail("손상 파일이 .corrupt로 보관되지 않음");
+        if (!JsonMapFile.TryRead(path, out var revived, out _) || revived.Count != 1) Fail("복구 후 본 파일이 되살아나지 않음");
+
+        File.WriteAllText(path, "nope");
+        File.WriteAllText(path + ".bak", "nope");
+        var reset = JsonMapFile.LoadWithRecovery(path, warnings.Add, out var r3);
+        if (r3 != JsonMapFile.LoadResult.Reset || reset.Count != 0) Fail($"백업까지 손상: result={r3}, count={reset.Count}");
+        return failed;
+    }
+
+    /// <summary>공식 곡 소유 기록: 기록·재현, 기록 없는 곡은 잠김, 변경 시에만 저장 필요, 잘못된 비트 무시 (19차).</summary>
+    private static int TestSongOwnershipStore()
+    {
+        int failed = 0;
+        void Fail(string msg) { Console.WriteLine($"   [FAIL SongOwnership] {msg}"); failed++; }
+
+        var store = new SongOwnershipStore();
+        if (!store.Record("s1", SongOwnershipStore.Available, true)) Fail("첫 기록이 변경으로 보고되지 않음");
+        if (store.Record("s1", SongOwnershipStore.Available, true)) Fail("같은 값 재기록이 변경으로 보고됨 (매 호출 저장 유발)");
+        if (!store.Record("s1", SongOwnershipStore.NotOwned, false) || !store.Record("s1", SongOwnershipStore.Lock, false)) Fail("다른 판정 기록 실패");
+        if (!store.Record("s1", SongOwnershipStore.Available, false)) Fail("값 변경이 변경으로 보고되지 않음");
+
+        if (store.Resolve("s1", SongOwnershipStore.Available, out bool k1) || !k1) Fail("Available 재현 실패 (false 기대)");
+        if (store.Resolve("s1", SongOwnershipStore.NotOwned, out _) || store.Resolve("s1", SongOwnershipStore.Lock, out _)) Fail("NotOwned/Lock 재현 실패 (false 기대)");
+
+        // 기록 없는 곡 = 사용 불가·미보유·잠김 (소유를 모르는 유료 곡을 열지 않는다)
+        if (store.Resolve("unknown", SongOwnershipStore.Available, out bool k2) || k2) Fail("기록 없는 곡 Available이 true");
+        if (!store.Resolve("unknown", SongOwnershipStore.NotOwned, out _) || !store.Resolve("unknown", SongOwnershipStore.Lock, out _)) Fail("기록 없는 곡이 보유/해금으로 나옴");
+        // 일부 판정만 기록된 곡: 기록 안 된 판정은 잠김 기본값
+        store.Record("s2", SongOwnershipStore.Available, true);
+        if (!store.Resolve("s2", SongOwnershipStore.Lock, out bool k3) || k3) Fail("부분 기록 곡의 Lock 기본값이 잠김이 아님");
+
+        // 저장 → 다시 읽기 왕복, 잘못된 값(0·범위 밖 비트) 무시
+        var snap = store.Snapshot();
+        snap["bad"] = 0;
+        snap["junk"] = 1 << 20;
+        var round = new SongOwnershipStore(snap);
+        if (round.Count != 2 || round.Resolve("s1", SongOwnershipStore.Available, out _) || !round.Resolve("s2", SongOwnershipStore.Available, out _))
+            Fail($"왕복 실패: count={round.Count}");
+        if (store.Record(null, 0, true) || store.Record("s", 7, true)) Fail("null ID·잘못된 판정 번호가 기록됨");
         return failed;
     }
 }
