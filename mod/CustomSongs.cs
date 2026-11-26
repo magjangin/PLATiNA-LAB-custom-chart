@@ -343,7 +343,8 @@ internal static class CustomSongs
                 {
                     // 접두사가 안 맞는 대부분의 곡은 여기서 할당 없이 끝난다. 접두사가 맞을 때만 등록 여부를 확인한다.
                     if (!NativeStrings.StartsWith(idPtr, IdPrefix)) return false;
-                    return IsCustomId(ReadSongId(song));
+                    // 커스텀 곡은 판정 게터마다 여기까지 온다 → 게터(il2cpp_runtime_invoke + 문자열 할당) 대신 포인터 캐시 (21차)
+                    return IsCustomId(ReadSongIdCached(song));
                 }
                 // 접두사 판정만 비교하면 일반 곡(모두 false)으로는 잘못된 오프셋을 못 잡는다 → 문자열 전체를 비교
                 var managed = ReadSongId(song);
@@ -372,8 +373,8 @@ internal static class CustomSongs
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("EncryptedBool")]
     internal static bool DecodeEncrypted(Il2CppPlatinaLab.Common.EncryptedPrimitives.EncryptedBool value) => value;
 
-    private static readonly object s_idCacheLock = new();
-    private static readonly Dictionary<IntPtr, string> s_idByNativeString = new();
+    // 판정 게터는 곡마다 여러 번(로딩 스레드 포함) 불린다 → lock 없이 읽는 ConcurrentDictionary (21차, 예전엔 조회마다 lock 2회)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<IntPtr, string> s_idByNativeString = new();
 
     /// <summary>
     /// 공식 곡 소유 기록(SongOwnership)용 곡 ID 읽기. 선곡 화면은 곡마다 판정 게터를 여러 번 부르므로
@@ -394,14 +395,10 @@ internal static class CustomSongs
                 return managed;
             }
             if (idPtr == IntPtr.Zero) return null;
-            lock (s_idCacheLock)
-                if (s_idByNativeString.TryGetValue(idPtr, out var cached) && NativeStrings.EqualsManaged(idPtr, cached)) return cached;
+            if (s_idByNativeString.TryGetValue(idPtr, out var cached) && NativeStrings.EqualsManaged(idPtr, cached)) return cached;
             var id = Il2CppInterop.Runtime.IL2CPP.Il2CppStringToManaged(idPtr);
-            lock (s_idCacheLock)
-            {
-                if (s_idByNativeString.Count >= 8192) s_idByNativeString.Clear(); // 카탈로그 재생성이 반복돼도 무한히 자라지 않게
-                s_idByNativeString[idPtr] = id;
-            }
+            if (s_idByNativeString.Count >= 8192) s_idByNativeString.Clear(); // 카탈로그 재생성이 반복돼도 무한히 자라지 않게
+            s_idByNativeString[idPtr] = id;
             return id;
         }
         catch (Exception e)
