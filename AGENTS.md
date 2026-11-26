@@ -2,7 +2,7 @@
 
 ## 1. 대상 게임 버전 & 환경 정보
 - **게임명:** PLATiNA LAB (Steam App ID: `3430470`)
-- **Steam Build ID / 지문:** `25981392` / `GameAssembly.dll` `96,829,440`바이트 (`ModHealth`가 `appmanifest_3430470.acf`의 `buildid`와 실제 파일 크기를 이중 확인 — `.acf` 자동 업데이트 차단·DepotDownloader 복사본 환경 대비)
+- **Steam Build ID / 지문:** `26909943` / `GameAssembly.dll` `107,589,120`바이트 (`ModHealth`가 `appmanifest_3430470.acf`의 `buildid`와 실제 파일 크기를 이중 확인 — `.acf` 자동 업데이트 차단·DepotDownloader 복사본 환경 대비)
 - **Unity 버전:** `6000.3.25f1`
 - **스크립팅 백엔드:** IL2CPP (metadata v39)
 - **모드 로더:** MelonLoader 0.7.3 Open-Beta (`net6` 런타임)
@@ -20,7 +20,7 @@
 - **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과)
 - **후킹 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
-- **업데이트 내성 감사 & 감사 이력(1~21차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
+- **업데이트 내성 감사 & 감사 이력(1~22차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -109,6 +109,7 @@
 ---
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
+- 22차(v1.4.3) 인게임 확인: 게임 업데이트(Build 26909943) 후 커스텀 곡 주입 및 플레이 정상 여부, Addressables 일반 에셋 로딩 체감 속도 향상(FindIdIn 접두사 단락), 미리듣기 재생 및 중단(Stop) 후 곡 변경 시 음원 오염 없는지, 오버레이 재도전 시 라벨 깜빡임 해소.
 - 21차(v1.4.2) 인게임 확인: 선곡 화면에서 커스텀 곡 잠금·보유 표시가 이전과 같은지(`IsCustomSong` 캐시 경로), 커버 파일 교체가 1초 안에 반영되는지, 판정바·키뷰어 정상 표시와 `[PlayOverlay] … 연속 오류` 로그가 없는지.
 - 20차(v1.4.1) 인게임 확인: `OfflineMode=1` 시작 로그 `[Health] 오프라인 모드 필수 패치 정상 (7종)`, 선곡 스크롤 중 `[Curtain]` 스캔이 씬 전환 직후에만 도는지, `[SteamBypass]` 로그가 `(이후 같은 로그 생략)`·`(직전 10초간 … 생략)`으로 줄었는지. `File.Replace` 폴백은 일반 NTFS에서는 타지 않는다(경고 로그가 없어야 정상).
 - 19차(v1.4.0) 인게임 확인: `OfflineMode=0` + 스팀에서 로그인·공식 곡 기록 전송·메뉴 종료가 원본대로인지, 선곡 화면 후 종료 시 `song_ownership.json` 생성, 선곡 스크롤 체감 속도. `OfflineMode=1`에서 보유 곡만 열림·미보유 잠김·결과 화면·커튼·메뉴 종료. **소유자의 config.txt에는 `OfflineMode` 키가 없으므로 기본 0(온라인)** — 오프라인 사본은 기록을 만든 뒤 `OfflineMode=1`을 추가해야 한다.

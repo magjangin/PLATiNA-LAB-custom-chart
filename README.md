@@ -25,7 +25,7 @@
 
 | 항목 | 버전 |
 | --- | --- |
-| 게임 | PLATiNA LAB (Steam App ID `3430470`, Build ID `25981392`) |
+| 게임 | PLATiNA LAB (Steam App ID `3430470`, Build ID `26909943`) |
 | 엔진 | Unity `6000.3.25f1`, IL2CPP |
 | 모드 로더 | MelonLoader `0.7.3` (net6) |
 

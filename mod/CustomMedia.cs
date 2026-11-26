@@ -447,6 +447,15 @@ internal static class PreviewSoundController_Play_Patch
     }
 }
 
+[HarmonyPatch(typeof(PreviewSoundController), nameof(PreviewSoundController.Stop))]
+internal static class PreviewSoundController_Stop_Patch
+{
+    private static void Prefix()
+    {
+        CustomMedia.PreviewSong = null;
+    }
+}
+
 /// <summary>
 /// 미리듣기/인게임 BGM 교체. PreviewSoundController의 로더와 PatternPlayer.SetMainTrackToPlay는 실측상 패치가 발동하지 않고
 /// SoundData 생성자는 IL2CPP 패치 백엔드 초기화에 실패해서, 모든 음원이 거치는 정적 SoundData.FromHEAudioClip에서 바꾼다.
