@@ -11,7 +11,7 @@ namespace PLATiNALAB.Mod;
 /// </summary>
 internal static class ModHealth
 {
-    private const string TestedBuildId = "25981392";
+    private const string TestedBuildId = "26909943";
     private const string AppManifest = "appmanifest_3430470.acf";
     /// <summary>검증 빌드에서 패치된 IResourceLocator.Locate 구현체 수 (DynamicResourceLocator, ResourceLocationMap, ContentCatalogData+ResourceLocator).</summary>
     private const int TestedLocateCount = 3;
@@ -70,7 +70,7 @@ internal static class ModHealth
     /// 검증 빌드의 GameAssembly.dll 크기(바이트). Steam .acf 업데이트 차단·DepotDownloader 복사본처럼 매니페스트의 buildid가
     /// 실제 파일과 어긋날 수 있어서, 실제 파일 크기를 두 번째 기준으로 쓴다 (업데이트가 있었다면 코드가 다시 컴파일돼 거의 항상 달라진다).
     /// </summary>
-    private const long TestedGameAssemblySize = 96829440;
+    private const long TestedGameAssemblySize = 107589120;
 
     public static void CheckOnStart()
     {

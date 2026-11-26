@@ -583,6 +583,20 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 
 확인 항목 (인게임): AGENTS.md §7의 21차 항목.
 
+## 22차 (2026-11-26): 게임 업데이트(Build 26909943) 실측 대응·Addressables 탐색 단락·미리듣기 정리 강화 → v1.4.3
+
+대상: 게임 업데이트로 변경된 바이너리 지문 확인, `AddressableKeyRedirect` 키 탐색 경로, `CustomMedia` 미리듣기 생명주기, `PlayOverlay` 곡 전환 초기화.
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[HarmonyPatch]` 72개·`[PatchArgs]` 79개·`[Fingerprint]` 갱신 통과 등 전 항목 실패 0). **인게임 실기는 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C22-1 | `ModHealth.TestedBuildId` / `TestedGameAssemblySize` (지문 갱신) | 게임 업데이트로 Steam 매니페스트 `buildid`가 `26909943`, `GameAssembly.dll` 크기가 `107,589,120`바이트로 변경되어 하네스 `[Fingerprint]` 실패 및 시작 시 경고 발생 | 최신 빌드 기준(`26909943` / `107589120`)으로 갱신하여 지문 검증 통과 |
+| C22-2 | `CustomSongs.FindIdIn` (병목) | `Addressables.Locate`에서 모든 에셋(수백~수천 개) 로드마다 불리는데, 접두사 확인 없이 `s_songsByIdLengthDesc` 배열 전체를 선형 탐색 | `text.Contains(IdPrefix)` 단락을 먼저 확인하여 비-커스텀 에셋 로딩 시 O(1)로 배열 순회 완전 생략 |
+| C22-3 | `CustomMedia.PreviewSong` / `PreviewSoundController.Stop` (상태 누수 방지) | `PreviewSoundController.Play`만 후킹하고 `Stop`이 없어, 미리듣기가 멈춘 뒤에도 `PreviewSong`이 이전 커스텀 곡으로 잔류해 음원 캐시 방출 차단 및 공식 기반 곡 미리듣기 시 이전 커스텀 음원 재생 위험 존재 | `PreviewSoundController.Stop` Prefix 훅을 추가해 `CustomMedia.PreviewSong = null;`로 안전하게 초기화 |
+| C22-4 | `PlayOverlay.Reset` (초기화 안정성) | `Reset()` 시 판정 목록은 비우지만 `s_labelShown` 플래그가 유지되어, 곡 재시작 시 1프레임 동안 이전 곡의 마지막 판정 텍스트가 깜빡일 가능성 존재 | `Reset()`에서 `s_labelShown = false;` 명시적 초기화 |
+
+확인 항목 (인게임): AGENTS.md §7의 22차 항목.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

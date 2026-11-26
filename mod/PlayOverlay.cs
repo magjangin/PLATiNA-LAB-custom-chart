@@ -119,6 +119,7 @@ internal static class PlayOverlay
         s_keyLayoutValid = false;
         s_labelVersion = -1;
         s_ticksPlacedVersion = -1;
+        s_labelShown = false;
     }
 
     /// <summary>게임 루프 스레드에서 호출. error = 게임 단위(ms), 음수 = FAST.</summary>

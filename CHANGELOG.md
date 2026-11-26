@@ -1,9 +1,19 @@
 # Changelog
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르고, 버전은 `mod/Core.cs`의 `MelonInfo`와 같습니다.
-검증 기준 게임: PLATiNA LAB Build `25981392` (`GameAssembly.dll` 96,829,440바이트), MelonLoader 0.7.3.
+검증 기준 게임: PLATiNA LAB Build `26909943` (`GameAssembly.dll` 107,589,120바이트), MelonLoader 0.7.3.
 
 ## [Unreleased]
+
+## [1.4.3] - 2026-11-26
+
+### 변경 (업데이트 내성)
+- 게임 업데이트(Steam Build `26909943`, `GameAssembly.dll` 107,589,120바이트)에 맞춰 내부 검증 기준 지문을 갱신했다.
+- 미리듣기 컨트롤러 `PreviewSoundController.Stop` Prefix 훅을 추가하여, 미리듣기가 멈춘 뒤 이전 커스텀 곡의 잔류 참조를 즉시 정리한다 (메모리 누수 방지 및 공식 기반 곡 미리듣기 시 음원 오염 방지).
+- 오버레이 리셋(`PlayOverlay.Reset`) 시 판정 라벨 표시 상태(`s_labelShown`)를 명시적으로 초기화하여 재도전/곡 시작 시 잔류 텍스트 깜빡임을 방지했다.
+
+### 성능
+- `CustomSongs.FindIdIn`에서 접두사(`hwa_`) 포함 여부를 먼저 확인하여, Addressables가 일반 에셋(수백~수천 개)을 로드할 때 불필요한 배열 순회를 O(1)로 단락시켰다.
 
 ## [1.4.2] - 2026-11-26
 

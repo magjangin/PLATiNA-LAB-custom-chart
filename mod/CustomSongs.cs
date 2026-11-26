@@ -292,7 +292,7 @@ internal static class CustomSongs
     /// </summary>
     public static CustomSong FindIdIn(string text)
     {
-        if (string.IsNullOrEmpty(text)) return null;
+        if (string.IsNullOrEmpty(text) || !text.Contains(IdPrefix, StringComparison.Ordinal)) return null;
         foreach (var s in s_songsByIdLengthDesc)
             if (s.Id != null && text.Contains(s.Id, StringComparison.Ordinal))
                 return s;
