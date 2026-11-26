@@ -101,6 +101,15 @@ internal static class PlayOverlay
     private static readonly List<bool> s_tickEnabled = new(); // 틱 Image.enabled를 관리 쪽에서 기억 (게터도 IL2CPP 호출)
     private static bool s_labelShown;
 
+    /// <summary>
+    /// 연속 오류 프레임 수와 영구 중지 플래그 (21차). 게임 업데이트로 uGUI/TMP 멤버가 바뀌면 Build()가 도중에 실패하거나
+    /// 갱신이 매 프레임 예외를 던진다. 예전에는 Build 실패 시 만들다 만 루트 GameObject가 프레임마다 새로 쌓였고(누수),
+    /// 갱신 예외는 WarnOnce로 로그만 줄일 뿐 프레임마다 예외 비용을 냈다 → 120프레임 연속이면 이번 실행 동안 오버레이를 끈다.
+    /// </summary>
+    private const int MaxErrorFrames = 120;
+    private static int s_errorFrames;
+    private static bool s_broken;
+
     public static void Reset()
     {
         lock (s_lock) { s_pending.Clear(); s_history.Clear(); s_last = null; }
@@ -137,6 +146,7 @@ internal static class PlayOverlay
             bool showBar = InPlay && ModConfig.EnableJudgmentBar;
             bool showKeys = InPlay && ModConfig.EnableKeyViewer;
             bool showAny = showBar || showKeys;
+            if (s_broken) return;
             // 비플레이 화면에서는 Unity Object == null 판정(IL2CPP 호출)조차 생략한다
             if (!showAny && !s_rootActive) return;
             // 화면 크기와 오버레이 생존 여부는 처음과 RecheckFrames마다만 다시 읽는다 (둘 다 IL2CPP 호출)
@@ -151,15 +161,42 @@ internal static class PlayOverlay
             if (!s_built)
             {
                 if (!showAny) { s_rootActive = s_barActive = s_keyActive = false; return; }
-                Build();
+                try { Build(); }
+                catch
+                {
+                    DestroyRoot(); // 만들다 만 루트를 남기지 않는다 (다음 프레임에 또 만들면 누수)
+                    throw;
+                }
             }
             if (s_rootActive != showAny) { s_root.SetActive(showAny); s_rootActive = showAny; }
             if (s_barActive != showBar) { s_barGroup.gameObject.SetActive(showBar); s_barActive = showBar; }
             if (s_keyActive != showKeys) { s_keyGroup.gameObject.SetActive(showKeys); s_keyActive = showKeys; }
             if (showBar) UpdateJudgmentBar();
             if (showKeys) UpdateKeyViewer();
+            s_errorFrames = 0;
         }
-        catch (Exception e) { WarnOnce($"[PlayOverlay] 갱신 오류: {e.Message}"); }
+        catch (Exception e)
+        {
+            WarnOnce($"[PlayOverlay] 갱신 오류: {e.Message}");
+            if (++s_errorFrames >= MaxErrorFrames)
+            {
+                s_broken = true;
+                Core.Log.Error($"[PlayOverlay] {MaxErrorFrames}프레임 연속 오류로 이번 실행 동안 판정바·키뷰어를 끕니다 (게임 업데이트 후라면 모드를 다시 빌드하세요): {e.GetType().Name}: {e.Message}");
+                try { DestroyRoot(); } catch { }
+            }
+        }
+    }
+
+    private static void DestroyRoot()
+    {
+        var root = s_root;
+        s_root = null;
+        s_built = false;
+        s_rootActive = s_barActive = s_keyActive = false;
+        if (root is not null)
+        {
+            try { UnityEngine.Object.Destroy(root); } catch { }
+        }
     }
 
     // ================= UI 생성 =================

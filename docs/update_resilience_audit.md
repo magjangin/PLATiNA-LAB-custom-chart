@@ -564,6 +564,25 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 
 확인 항목 (인게임): AGENTS.md §7의 20차 항목.
 
+## 21차 (2026-11-26): 20차에서 얕게 본 파일 정독 → v1.4.2
+
+대상: 20차는 오프라인 경로 위주였다. 이번에는 `AddressableKeyRedirect`·`OfflineSession`·`PlayAssist`·`CustomMedia`·`CustomCharts`·`CustomSongs` 판정 경로·`PlayOverlay` 갱신/생성 경로를 정독했다.
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[Layout]` 366·`[Body]` 536 포함 전 항목 실패 0). **인게임 실기는 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C21-1 | `CustomSongs.IsCustomSong` (병목) | 접두사 `hwa_`가 맞으면 등록 여부를 보려고 매번 `SongInfo.Id` 게터(`il2cpp_runtime_invoke` + 문자열 할당)를 불렀다. 커스텀 곡은 `IsAvailable/IsNotOwned/IsLock/IsHidden` 판정 게터마다 이 경로를 탄다 | 19차의 포인터 캐시 `ReadSongIdCached`로 읽는다 |
+| C21-2 | `CustomSongs.ReadSongIdCached` (병목) | 캐시 조회·저장마다 `lock` 2회. 판정 게터는 로딩 스레드에서도 불려 경합 가능 | `ConcurrentDictionary`로 lock 없이 읽기 |
+| C21-3 | `CustomMedia.GetCover` (병목) | 선곡 화면에서 배너가 갱신될 때마다 커스텀 커버마다 `File.GetLastWriteTimeUtc`(디스크 메타데이터 조회) | 같은 커버는 1초 안이면 stat 없이 캐시 반환 (핫리로드는 최대 1초 늦게 반영) |
+| C21-4 | `PlayOverlay.Update`/`Build` (업데이트 내성·누수) | 업데이트로 uGUI/TMP 멤버가 바뀌어 `Build()`가 도중에 실패하면, 만들다 만 루트 GameObject가 프레임마다 새로 쌓였다. 갱신이 실패하면 `WarnOnce`로 로그만 줄이고 예외는 매 프레임 계속 던졌다 | `Build` 실패 시 루트 파괴(`DestroyRoot`). 120프레임 연속 오류면 이번 실행 동안 오버레이를 끄고 `[PlayOverlay] … 연속 오류` 오류 로그 |
+
+확인만 하고 고치지 않은 것:
+- `CustomCharts.ToStream`은 `MemoryStream` 생성에 실패하면 빈 스트림을 돌려준다(원본으로 되돌리지 않음). 인터롭 `MemoryStream` 생성자가 깨지면 이미 다른 경로도 함께 깨지므로 유지.
+- `AddressableKeyRedirect.Prefix`는 커스텀 키마다 치환 문자열을 새로 IL2CPP 문자열로 만든다. 플레이당 수 건이라 캐시하지 않음.
+- `InGameSettingManager.Save`·`BGAPlayer.SetClip`의 Unity `== null`은 저장·플레이 시작 때 한 번이라 유지.
+
+확인 항목 (인게임): AGENTS.md §7의 21차 항목.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

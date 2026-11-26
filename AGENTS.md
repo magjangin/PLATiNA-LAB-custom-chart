@@ -20,7 +20,7 @@
 - **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과)
 - **후킹 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
-- **업데이트 내성 감사 & 감사 이력(1~20차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
+- **업데이트 내성 감사 & 감사 이력(1~21차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -34,7 +34,7 @@
   - `CategoryCacheFactory.CreateAll` Postfix에서 `custom` 카테고리 추가, `SongCategoryResourceCollection.GetDataSet`에서 UI 리소스 생성.
   - `AddressableKeyRedirect`가 Addressables `Locate` 구현체 3종에서 `hwa_NNN` 키를 기반 곡 ID(`s_baseSongId`)로 치환.
   - `PatternPlayer.DetermineRunning`에서 `DurationMicroSec - 3s`까지 클리어 연출 보류.
-- **미디어 (`mod/CustomMedia.cs`, `mod/MediaDuration.cs`):** 커버(`CoverManager.GetCoverSprite`, LRU 24개), BGM/미리듣기(`SoundData.FromHEAudioClip`), BGA(`BGAPlayer.SetClip`). Unity 6 `ReadOnlySpan` 래퍼 이슈는 `MarshalledUnityObject.MarshalNotNull` + `ManagedSpanWrapper` + `*_Injected` icall로 우회 (`AllowUnsafeBlocks`).
+- **미디어 (`mod/CustomMedia.cs`, `mod/MediaDuration.cs`):** 커버(`CoverManager.GetCoverSprite`, LRU 24개, 파일 수정 시각은 커버당 1초에 한 번 확인), BGM/미리듣기(`SoundData.FromHEAudioClip`), BGA(`BGAPlayer.SetClip`). Unity 6 `ReadOnlySpan` 래퍼 이슈는 `MarshalledUnityObject.MarshalNotNull` + `ManagedSpanWrapper` + `*_Injected` icall로 우회 (`AllowUnsafeBlocks`).
 - **BMS 변환 (`mod/BmsConverter.cs`):** `#WAV` 파일명(`ShortNote`, `LongNote 홀드 시작/끝`, `PitchNote`→key 255) + LNTYPE 1(5x/6x) + `#LNOBJ` 지원. `#RANDOM`/`#IF`는 1번 분기 고정(경고). 음원 길이는 `MediaDuration.Audio`(Ogg Vorbis/WAV)로 읽고 못 읽으면 경고. 다국어 인코딩 자동 감지(`EncodingHelper`).
 - **플레이 보조 & 오버레이 (`mod/ModConfig.cs`, `mod/PlayAssist.cs`, `mod/PlayOverlay.cs`):** `SaveCustomKey\config.txt` 핫리로드. 오토 플레이(`Extra.AutoPlay`), 올 퍼펙트(커스텀 곡 전용), uGUI Canvas 판정바·키뷰어.
 - **오프라인 세션 (`mod/OfflineSession.cs`):** 커스텀 곡의 `RequestGameStart`/`RenewGameSession`/`SendGameEnd` 서버 호출 차단 및 로컬 결과(`AccuracyV2Formula`/`MasteryV2Formula`) 생성. `OfflineMode=1`이면 공식 곡도 같은 로컬 경로. `SendGameEnd`는 훅이 꺼져도 `LastStarted`가 커스텀이면 서버로 보내지 않는다.
@@ -42,10 +42,10 @@
   - **오프라인 필수 패치 (20차):** `ModHealth.s_offlineRequiredPatches`(스팀 SDK 초기화·로그인·인증 토큰·미로그인 팝업·종료)가 빠지면 `OfflineMode=1`일 때만 `[Health] 오프라인 모드 필수 패치 누락` 오류 로그. 커스텀 곡 주입은 끄지 않는다(오프라인 기동 문제와 무관). 하네스 `[Required]`가 이름을 대조한다.
   - **로그 규칙 (20차):** 오프라인에서는 모든 API 호출이 실패해 우회 훅이 연달아 불린다. 더미 응답 성공 로그는 `Offline.LogOnce`, 오류 팝업 차단 경고는 `Offline.WarnThrottled`(키당 10초)로 남긴다 — 새 오프라인 훅도 이 둘을 쓴다.
   - **공식 곡 보유 판정 (Rationale):** 오프라인에서는 서버 보유 정보가 없어 원본이 KeyNotFound를 던진다. decf3b7은 모든 공식 곡을 무조건 해금해 **미보유 유료 DLC까지 열었다** → 소유자 결정(2026-11-25)으로 제거. 온라인(`OfflineMode=0`)에서 `IsAvailable/IsNotOwned/IsLock` 원본 결과를 Postfix로 `SongOwnership`에 기록하고, 오프라인에서는 기록만 재현(없으면 잠김). 미보유 곡을 여는 기능은 공개 릴리즈에 넣지 않는다.
-  - 곡 ID는 `CustomSongs.ReadSongIdCached`(백킹 필드 IL2CPP 문자열 포인터 캐시 + 내용 재비교)로 읽는다 — 판정 게터는 곡마다 반복 호출되는 핫패스.
+  - 곡 ID는 `CustomSongs.ReadSongIdCached`(백킹 필드 IL2CPP 문자열 포인터 캐시 + 내용 재비교, 21차부터 lock 없는 `ConcurrentDictionary`)로 읽는다 — 판정 게터는 곡마다 반복 호출되는 핫패스. `IsCustomSong`의 접두사 일치 경로도 이 캐시를 쓴다(게터 금지).
 - **진단 패치 (`mod/DiagnosticPatches.cs`):** 로그 전용 패치는 `DiagnosticLogs=1`일 때만 수동 적용.
 - **패치 적용 (`mod/SafePatcher.cs`, 17차):** `[assembly: HarmonyDontPatchAll]`로 MelonLoader 자동 `PatchAll`을 끄고, `Core.OnInitializeMelon`에서 `[HarmonyPatch]` 클래스마다 `CreateClassProcessor(t).Patch()`를 따로 try/catch로 적용한다. 새 `[HarmonyPatch]` 클래스는 별도 등록 없이 자동 수집된다. 하네스 `[SafePatch]`가 자동 PatchAll이 꺼져 있는지 검사한다.
-- **오버레이 성능 규칙 (`mod/PlayOverlay.cs`, 17차):** 매 프레임 경로에서 `Mathf.*`, `new Color/Rect/Vector2`, `Rect.x` 등 Unity 값 형식 헬퍼와 Unity `== null`을 쓰지 않는다(전부 IL2CPP 호출). `Rgba`/`Vec2`/`Box`(필드 직접 대입)와 `MathF`·`Math`를 쓰고, 화면 크기·오버레이 생존은 30프레임마다 확인한다.
+- **오버레이 성능 규칙 (`mod/PlayOverlay.cs`, 17차):** 매 프레임 경로에서 `Mathf.*`, `new Color/Rect/Vector2`, `Rect.x` 등 Unity 값 형식 헬퍼와 Unity `== null`을 쓰지 않는다(전부 IL2CPP 호출). `Rgba`/`Vec2`/`Box`(필드 직접 대입)와 `MathF`·`Math`를 쓰고, 화면 크기·오버레이 생존은 30프레임마다 확인한다. `Build()` 실패 시 루트를 파괴하고, 120프레임 연속 오류면 그 실행 동안 오버레이를 끈다(21차, `s_broken`) — 매 프레임 예외·GameObject 누수 방지.
 - **코드 작성 필수 규칙 (하네스 `[Guarded]`/`[HarmonyPatch]`/`[PatchArgs]`/`[Required]`/`[Layout]`/`[Body]`/`[Diag]`/`[NativeField]`/`[Reflect]`/`[GuardKey]`/`[Mark]`/`[Fingerprint]`/`[SafePatch]`/`[Offline]` 검증):**
   1. 게임 타입 직접 참조를 `try`로 감쌀 때는 `[MethodImpl(NoInlining), Guarded("...")]` 별도 메서드로 분리 (같은 메서드의 `try`는 JIT 실패를 못 잡음). 게임 멤버를 직접 참조하는 모든 `[NoInlining]` 격리 메서드에도 `[Guarded]` 필수.
   2. 모드 클래스 필드에 게임 `enum`을 그대로 저장하지 말고 `int`로 저장.
@@ -109,6 +109,7 @@
 ---
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
+- 21차(v1.4.2) 인게임 확인: 선곡 화면에서 커스텀 곡 잠금·보유 표시가 이전과 같은지(`IsCustomSong` 캐시 경로), 커버 파일 교체가 1초 안에 반영되는지, 판정바·키뷰어 정상 표시와 `[PlayOverlay] … 연속 오류` 로그가 없는지.
 - 20차(v1.4.1) 인게임 확인: `OfflineMode=1` 시작 로그 `[Health] 오프라인 모드 필수 패치 정상 (7종)`, 선곡 스크롤 중 `[Curtain]` 스캔이 씬 전환 직후에만 도는지, `[SteamBypass]` 로그가 `(이후 같은 로그 생략)`·`(직전 10초간 … 생략)`으로 줄었는지. `File.Replace` 폴백은 일반 NTFS에서는 타지 않는다(경고 로그가 없어야 정상).
 - 19차(v1.4.0) 인게임 확인: `OfflineMode=0` + 스팀에서 로그인·공식 곡 기록 전송·메뉴 종료가 원본대로인지, 선곡 화면 후 종료 시 `song_ownership.json` 생성, 선곡 스크롤 체감 속도. `OfflineMode=1`에서 보유 곡만 열림·미보유 잠김·결과 화면·커튼·메뉴 종료. **소유자의 config.txt에는 `OfflineMode` 키가 없으므로 기본 0(온라인)** — 오프라인 사본은 기록을 만든 뒤 `OfflineMode=1`을 추가해야 한다.
 - 최신 빌드 인게임 실기 확인: `[HookGuard]`(54개 메서드), 11차 백킹 프로퍼티 폴백(직접 경로가 정상이면 호출되지 않음 — 회귀 없음만 확인), 12차 `song_ids.json` 교체 저장(`.bak` 생성) 및 곡 번호 유지, `[Native]` 자체 검증, 커스텀 곡 잠금/플레이/결과, 오토 플레이(`IsScorable` 안전장치 포함), 판정바·키뷰어·올 퍼펙트.

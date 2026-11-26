@@ -34,8 +34,15 @@ internal static class CustomMedia
 
     private const int MaxCoverCache = 24;
     private const int MaxFailedCovers = 128;
+    /// <summary>
+    /// 같은 커버의 파일 수정 시각(stat)을 다시 확인하는 최소 간격 (21차). GetCoverSprite는 선곡 화면에서 배너마다·갱신마다
+    /// 불려, 커스텀 곡 커버는 호출마다 File.GetLastWriteTimeUtc(디스크 메타데이터 조회)를 했다. 핫리로드는 1초 늦게 반영된다.
+    /// </summary>
+    private const long CoverStatIntervalMs = 1_000;
+
     private sealed class CoverEntry
     {
+        public long CheckedAt;
         public long Ticks;
         public Sprite Sprite;
         public LinkedListNode<string> Node;
@@ -309,11 +316,22 @@ internal static class CustomMedia
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("CoverManager.GetCoverSprite")]
     public static Sprite GetCover(string path)
     {
+        long now = Environment.TickCount64;
+        lock (s_coverLock)
+        {
+            // 최근에 확인한 캐시는 stat 없이 돌려준다 (Unity == null 대신 참조 비교 + WasCollected)
+            if (s_covers.TryGetValue(path, out var hot) && now - hot.CheckedAt < CoverStatIntervalMs && hot.Sprite is not null && !hot.Sprite.WasCollected)
+            {
+                TouchLru(s_coverLru, hot.Node);
+                return hot.Sprite;
+            }
+        }
         long ticks = GetWriteTicks(path);
         lock (s_coverLock)
         {
             if (s_covers.TryGetValue(path, out var cached) && cached.Ticks == ticks && cached.Sprite != null && !cached.Sprite.WasCollected)
             {
+                cached.CheckedAt = now;
                 TouchLru(s_coverLru, cached.Node);
                 return cached.Sprite;
             }
@@ -366,7 +384,7 @@ internal static class CustomMedia
             }
             EvictCoversIfFull();
             var node = s_coverLru.AddLast(path);
-            s_covers[path] = new CoverEntry { Ticks = ticks, Sprite = sprite, Node = node };
+            s_covers[path] = new CoverEntry { CheckedAt = now, Ticks = ticks, Sprite = sprite, Node = node };
             s_failedCovers.Remove(path);
             cacheCount = s_covers.Count;
         }
