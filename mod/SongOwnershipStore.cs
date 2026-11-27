@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace PLATiNALAB.Mod;
 
 /// <summary>
@@ -16,12 +18,12 @@ internal sealed class SongOwnershipStore
     public const int Available = 0, NotOwned = 1, Lock = 2;
     private const int KindCount = 3;
 
-    private readonly Dictionary<string, int> _bits;
+    private readonly ConcurrentDictionary<string, int> _bits;
     private readonly object _lock = new();
 
     public SongOwnershipStore(Dictionary<string, int> initial = null)
     {
-        _bits = new Dictionary<string, int>(StringComparer.Ordinal);
+        _bits = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
         if (initial == null) return;
         const int validMask = (1 << (KindCount * 2)) - 1;
         foreach (var (k, v) in initial)
@@ -31,7 +33,7 @@ internal sealed class SongOwnershipStore
         }
     }
 
-    public int Count { get { lock (_lock) return _bits.Count; } }
+    public int Count => _bits.Count;
 
     /// <summary>게임 판정을 기억한다. 값이 바뀌었으면 true (저장이 필요함).</summary>
     public bool Record(string songId, int kind, bool value)
@@ -48,17 +50,15 @@ internal sealed class SongOwnershipStore
         }
     }
 
+    /// <summary>오프라인 선곡 핫패스 조회: ConcurrentDictionary로 lock 없이 읽는다 (24차).</summary>
     public bool TryGet(string songId, int kind, out bool value)
     {
         value = false;
         if (string.IsNullOrEmpty(songId) || (uint)kind >= KindCount) return false;
         int known = 1 << (kind * 2), val = 1 << (kind * 2 + 1);
-        lock (_lock)
-        {
-            if (!_bits.TryGetValue(songId, out int bits) || (bits & known) == 0) return false;
-            value = (bits & val) != 0;
-            return true;
-        }
+        if (!_bits.TryGetValue(songId, out int bits) || (bits & known) == 0) return false;
+        value = (bits & val) != 0;
+        return true;
     }
 
     /// <summary>기록이 없을 때의 답: 사용 불가·미보유·잠김 (소유를 확인할 수 없는 곡은 열지 않는다).</summary>
@@ -71,8 +71,6 @@ internal sealed class SongOwnershipStore
         return known ? value : LockedDefault(kind);
     }
 
-    public Dictionary<string, int> Snapshot()
-    {
-        lock (_lock) return new Dictionary<string, int>(_bits, StringComparer.Ordinal);
-    }
+    public Dictionary<string, int> Snapshot() =>
+        new(_bits, StringComparer.Ordinal);
 }

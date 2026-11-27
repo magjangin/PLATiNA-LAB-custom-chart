@@ -27,8 +27,8 @@ namespace PLATiNALAB.Mod;
 /// </summary>
 internal static class BmsConverter
 {
-    /// <summary>BMS 채널 오브젝트 하나 (마디, 채널, 마디 내 비율, 오브젝트 ID).</summary>
-    internal readonly record struct BmsObject(int Measure, string Channel, double Fraction, string Value)
+    /// <summary>BMS 채널 오브젝트 하나 (마디, 채널, 마디 내 비율, 오브젝트 ID, 파싱 순서 Index).</summary>
+    internal readonly record struct BmsObject(int Measure, string Channel, double Fraction, string Value, int Index = 0)
     {
         public double Position => Measure + 1 + Fraction;
     }
@@ -229,6 +229,7 @@ internal static class BmsConverter
         if (headerOnly) return chart;
 
         int width = chart.Wav.Count > 0 ? chart.Wav.Keys.Max(k => k.Length) : 2;
+        int objectIndex = 0;
         foreach (var (measure, channel, data) in dataLines)
         {
             if (channel == "02") { chart.MeterChanges.Add(measure); continue; }
@@ -238,7 +239,7 @@ internal static class BmsConverter
             {
                 var value = data.Substring(i * w, w).ToUpperInvariant();
                 if (IsAllZero(value)) continue;
-                chart.Objects.Add(new BmsObject(measure, channel, (double)i / count, value));
+                chart.Objects.Add(new BmsObject(measure, channel, (double)i / count, value, objectIndex++));
             }
         }
         chart.Objects.Sort(CompareObjects);
@@ -266,7 +267,9 @@ internal static class BmsConverter
     private static int CompareObjects(BmsObject a, BmsObject b)
     {
         int cmp = a.Position.CompareTo(b.Position);
-        return cmp != 0 ? cmp : string.CompareOrdinal(a.Channel, b.Channel);
+        if (cmp != 0) return cmp;
+        cmp = string.CompareOrdinal(a.Channel, b.Channel);
+        return cmp != 0 ? cmp : a.Index.CompareTo(b.Index);
     }
 
     /// <summary>

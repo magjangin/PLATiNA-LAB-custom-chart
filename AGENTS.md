@@ -20,7 +20,7 @@
 - **오프라인 인터롭 하네스:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\tools\interop-harness` (`dotnet run -c Release`, 종료 코드 0 = 통과)
 - **후킹 명세서:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\hooks.md`
 - **차트(PPP JSON) 형식 & 커스텀 차트 사용법:** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\chart_format.md`
-- **업데이트 내성 감사 & 감사 이력(1~23차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
+- **업데이트 내성 감사 & 감사 이력(1~24차):** `H:\source\repos\PLATiNA LAB-unity-il2cpp\docs\update_resilience_audit.md`
 
 ---
 
@@ -109,6 +109,7 @@
 ---
 
 ## 7. 다음 단계 (미구현 / 인게임 확인 필요)
+- 24차(v1.4.5) 인게임 확인: 경로에 특수문자/공백이 포함된 곡의 BGA 정상 재생, 커스텀 커버 로드 실패 시 VRAM 누수 없음, 오프라인 선곡 화면 락 프리 동작(선곡 스크롤 체감 반응성), BMS 동일 위치 오브젝트 안정 처리.
 - 23차(v1.4.4) 인게임 확인: 3자리 wav 키를 쓰는 BMS에서 08 채널(`#BPMxx`) 변속 반영 정상 여부, `hold_start`/`long-start` 등 언더스코어·하이픈 포함 키음 파일명의 롱노트 정상 인식, 차트 스탬프 생성 및 WAV 로딩 지연 없음.
 - 22차(v1.4.3) 인게임 확인: 게임 업데이트(Build 26909943) 후 커스텀 곡 주입 및 플레이 정상 여부, Addressables 일반 에셋 로딩 체감 속도 향상(FindIdIn 접두사 단락), 미리듣기 재생 및 중단(Stop) 후 곡 변경 시 음원 오염 없는지, 오버레이 재도전 시 라벨 깜빡임 해소.
 - 21차(v1.4.2) 인게임 확인: 선곡 화면에서 커스텀 곡 잠금·보유 표시가 이전과 같은지(`IsCustomSong` 캐시 경로), 커버 파일 교체가 1초 안에 반영되는지, 판정바·키뷰어 정상 표시와 `[PlayOverlay] … 연속 오류` 로그가 없는지.

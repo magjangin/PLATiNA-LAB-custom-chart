@@ -366,8 +366,17 @@ internal static class CustomMedia
             UnityEngine.Object.Destroy(tex);
             return null;
         }
-        var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-        sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
+        Sprite sprite;
+        try
+        {
+            sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+            sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
+        }
+        catch
+        {
+            UnityEngine.Object.Destroy(tex);
+            throw;
+        }
         int cacheCount;
         lock (s_coverLock)
         {
@@ -528,7 +537,7 @@ internal static class BGAPlayer_SetClip_Patch
         var player = bga._videoPlayer;
         if (player == null || player.WasCollected) return;
         player.source = UnityEngine.Video.VideoSource.Url;
-        CustomMedia.SetUrl(player, new Uri(path).AbsoluteUri);
+        CustomMedia.SetUrl(player, Path.GetFullPath(path));
         ModHealth.Mark("Video");
         player.isLooping = isLooping;
         player.Prepare();
