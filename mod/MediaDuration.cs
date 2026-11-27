@@ -66,7 +66,9 @@ internal static class MediaDuration
                     dataLen = size == 0 || size == uint.MaxValue || body + size > len ? len - body : size;
                 }
                 if (byteRate > 0 && dataLen > 0) return dataLen / (double)byteRate;
-                pos = body + size + (size & 1); // 청크는 짝수 바이트로 정렬된다
+                long nextPos = body + size + (size & 1); // 청크는 짝수 바이트로 정렬된다
+                if (nextPos <= pos) break; // 비정상 청크 오버플로/무한 루프 방어
+                pos = nextPos;
             }
         }
         catch (Exception e) { Core.Log.Warning($"[MediaDuration] wav 길이 읽기 실패: {e.Message}"); }

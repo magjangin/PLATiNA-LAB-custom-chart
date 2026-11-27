@@ -66,11 +66,11 @@ internal static class CustomCharts
 
     private static string StampOf(params string[] paths)
     {
-        var sb = new StringBuilder();
+        var sb = new StringBuilder(paths.Length * 20);
         foreach (var p in paths)
         {
             long ticks = 0;
-            try { if (p != null && File.Exists(p)) ticks = File.GetLastWriteTimeUtc(p).Ticks; } catch { }
+            try { if (!string.IsNullOrEmpty(p)) ticks = File.GetLastWriteTimeUtc(p).Ticks; } catch { }
             sb.Append(ticks).Append('|');
         }
         return sb.ToString();

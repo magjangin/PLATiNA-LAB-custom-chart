@@ -597,6 +597,22 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 
 확인 항목 (인게임): AGENTS.md §7의 22차 항목.
 
+## 23차 (2026-11-27): BMS 변속 호환성·롱노트 키워드 정규화·I/O 및 컬렉션 심층 최적화 → v1.4.4
+
+대상: `BmsConverter` 채널 파싱 및 키음 역할 판정, `CustomCharts` 스탬프 생성 I/O, `MediaDuration` WAV 청크 방어, `OfflineSession` 계산식 널 방어, `PlayOverlay` 틱 만료 처리.
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[HarmonyPatch]` 72개·`[PatchArgs]` 79개·`[Fingerprint]` 전 항목 실패 0). **인게임 실기는 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C23-1 | `BmsConverter.Parse` (BMS 호환성 버그) | `#WAV`에 3자리 키(001~999)가 있으면 `width=3`이 되어, BMS 표준상 항상 2자리 키(`#BPMxx`)인 08 채널(BPM 변경)까지 3자리씩 끊겨 변속이 누락되거나 깨짐 | `int w = (channel == "03" \|\| channel == "08") ? 2 : width;`로 08 채널도 2자리 폭 고정 |
+| C23-2 | `BmsConverter.RoleOf` (키음 매칭 누락) | `"hold start"`, `"holdstart"`만 매칭하여 차트 제작자들이 자주 쓰는 언더스코어/하이픈(`hold_start`, `hold-start`, `long_start`, `hold_end`)이 일반 단노트로 처리됨 | 공백·언더스코어·하이픈을 제거한 정규화 문자열(`normalized`)로 검사하여 폭넓은 네이밍 지원 |
+| C23-3 | `CustomCharts.StampOf` (I/O 병목) | `File.Exists`와 `File.GetLastWriteTimeUtc`를 연달아 호출하여 파일당 2회씩 시스템 콜 발생 | `File.Exists`를 생략하고 바로 `GetLastWriteTimeUtc` 호출(파일 부재 시 0 처리)로 stat 디스크 시스템 콜 50% 절감 |
+| C23-4 | `MediaDuration.ReadWav` (무한 루프 방어) | 비정상 청크나 `size` 오버플로로 `nextPos <= pos`가 되는 경우 무한 루프 위험 | `if (nextPos <= pos) break;` 안전장치 추가 |
+| C23-5 | `OfflineSession.ComputeAccuracy` (방어적 코딩) | `request.Judge`가 null일 때 `AccuracyV2Formula` 호출 시 NRE 발생 가능 | `request?.Judge == null ? 0 : ...` 널 가드 추가 |
+| C23-6 | `PlayOverlay.UpdateJudgmentBar` (GC/컬렉션 최적화) | 만료된 틱이 전체일 때 `RemoveRange(0, expired)`는 불필요한 배열 요소 복사를 유발 | `expired >= s_history.Count ? s_history.Clear() : ...`로 O(1) 초기화 |
+
+확인 항목 (인게임): AGENTS.md §7의 23차 항목.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
