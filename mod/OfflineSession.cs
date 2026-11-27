@@ -291,7 +291,7 @@ internal static class InGameSurface_SendGameEnd_Patch
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("정확도 계산(ComputeAccuracy)")]
     private static int ComputeAccuracy(GameEndResult request) =>
-        Il2CppPlatinaLab.Main.Mastery.Utility.AccuracyV2Formula.GetAccuracyV2(request.Judge, request.WasPaused).Total;
+        request?.Judge == null ? 0 : Il2CppPlatinaLab.Main.Mastery.Utility.AccuracyV2Formula.GetAccuracyV2(request.Judge, request.WasPaused).Total;
 
     [MethodImpl(MethodImplOptions.NoInlining), Guarded("P.A.T.C.H. 계산(ComputeMastery)")]
     private static int ComputeMastery(PatternInfo patternInfo, int accuracy)

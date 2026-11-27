@@ -420,7 +420,8 @@ internal static class PlayOverlay
         while (expired < s_history.Count && now - s_history[expired].Time > Duration) expired++;
         if (expired > 0)
         {
-            s_history.RemoveRange(0, expired);
+            if (expired >= s_history.Count) s_history.Clear();
+            else s_history.RemoveRange(0, expired);
             s_historyVersion++;
         }
 

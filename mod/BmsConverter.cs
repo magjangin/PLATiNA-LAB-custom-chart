@@ -232,7 +232,7 @@ internal static class BmsConverter
         foreach (var (measure, channel, data) in dataLines)
         {
             if (channel == "02") { chart.MeterChanges.Add(measure); continue; }
-            int w = channel == "03" ? 2 : width; // 03은 16진 BPM 값 2자리
+            int w = (channel == "03" || channel == "08") ? 2 : width; // 03(16진) 및 08(#BPMxx 2자리)은 wav 폭과 무관하게 2자리 고정
             int count = data.Length / w;
             for (int i = 0; i < count; i++)
             {
@@ -519,13 +519,14 @@ internal static class BmsConverter
     {
         if (!bms.Wav.TryGetValue(value, out var file)) return Role.Short;
         var name = System.IO.Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
-        if (name.Contains("pitch") || name.Contains("피치") || name.Contains("滑音") || name.Contains("音高"))
+        var normalized = name.Replace(" ", "").Replace("_", "").Replace("-", "");
+        if (normalized.Contains("pitch") || normalized.Contains("피치") || normalized.Contains("滑音") || normalized.Contains("音高"))
             return Role.Pitch;
-        if (name.Contains("홀드 시작") || name.Contains("hold start") || name.Contains("holdstart") ||
-            name.Contains("长条开始") || name.Contains("长按开始") || name.Contains("ホールド開始"))
+        if (normalized.Contains("홀드시작") || normalized.Contains("holdstart") || normalized.Contains("longstart") ||
+            normalized.Contains("长条开始") || normalized.Contains("长按开始") || normalized.Contains("ホールド開始"))
             return Role.HoldStart;
-        if (name.Contains("홀드 끝") || name.Contains("hold end") || name.Contains("holdend") ||
-            name.Contains("长条结束") || name.Contains("长按结束") || name.Contains("ホールド終了"))
+        if (normalized.Contains("홀드끝") || normalized.Contains("holdend") || normalized.Contains("longend") ||
+            normalized.Contains("长条结束") || normalized.Contains("长按结束") || normalized.Contains("ホールド終了"))
             return Role.HoldEnd;
         return Role.Short;
     }
