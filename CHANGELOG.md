@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-11-27
+
+### 수정 (BGA 재생 및 리소스 누수 차단)
+- Unity VideoPlayer BGA 재생 시 `new Uri(path).AbsoluteUri` 대신 `Path.GetFullPath(path)`를 직접 전달하도록 수정했다. 파일 경로에 `#`(샤프), 공백, 유니코드 문자가 포함되어 있을 때 URL 인코딩(`%23`, `%20`)으로 인해 Windows Media Foundation 백엔드가 비디오 파일을 찾지 못하고 재생이 실패하던 문제를 완전히 해결했다.
+- `CustomMedia.GetCover`에서 `Sprite.Create` 단계가 실패하거나 예외가 발생할 경우, 이미 메모리에 할당된 `Texture2D`가 고아 상태로 남아 GPU VRAM을 누수시키는 문제를 방지하기 위해 `try-catch` 블록으로 감싸 명시적 `Destroy(tex)`를 보장했다.
+- BMS 파싱 시 동일 마디·동일 채널에 위치한 오브젝트들의 순서 안정성을 위해 `BmsObject`에 파싱 인덱스(`Index`)를 추가하고, 정렬 시 인덱스까지 대조하여 비결정적 순서 뒤바뀜을 차단했다.
+- `song_ids.json` 로드 시 손상되거나 비정상적으로 큰 번호(1~99999 범위 밖)를 필터링하여 `PatternIndex` 계산 시 발생할 수 있는 정수 오버플로를 사전에 방지했다.
+
+### 성능
+- `SongOwnershipStore`에 `ConcurrentDictionary<string, int>`를 적용하여, 오프라인 모드 선곡 화면에서 모든 곡의 보유 상태를 반복 조회하는 핫패스(`TryGet`)를 완전 락 프리(Lock-Free)화하여 다중 스레드 경합을 완전히 제거했다.
+
 ## [1.4.4] - 2026-11-27
 
 ### 수정 (BMS 호환성 및 안정성)

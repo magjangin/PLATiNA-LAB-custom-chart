@@ -583,9 +583,19 @@ internal static class CustomSongs
     /// 곡 번호 영속화 파일을 읽는다. 본 파일이 손상됐으면 직전 저장본(.bak)으로 복구하고, 손상 파일은 .corrupt로 옮겨 남긴다.
     /// 예전에는 읽기 실패 시 빈 맵으로 시작해 곧바로 덮어써서, 저장 도중 종료 한 번으로 모든 곡의 hwa_NNN·PatternIndex가 다시 매겨졌다.
     /// 읽기·교체 저장은 song_ownership.json과 같은 JsonMapFile을 쓴다 (19차 감사에서 공용화).
+    /// 손상되거나 비정상적인 거대 번호(오버플로/음수)는 필터링한다 (PatternIndex = 990000 + number * 10 + i 대비 1~99999).
     /// </summary>
-    private static Dictionary<string, int> LoadSongIdMap() =>
-        JsonMapFile.LoadWithRecovery(SongIdMapPath, w => Core.Log.Warning($"[CustomSongs] {w}"), out _, minValue: 1);
+    private static Dictionary<string, int> LoadSongIdMap()
+    {
+        var raw = JsonMapFile.LoadWithRecovery(SongIdMapPath, w => Core.Log.Warning($"[CustomSongs] {w}"), out _, minValue: 1);
+        var filtered = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (k, v) in raw)
+        {
+            if (v is >= 1 and <= 99999) filtered[k] = v;
+            else Core.Log.Warning($"[CustomSongs] song_ids.json의 '{k}' 번호 {v}가 유효 범위(1~99999)를 벗어나 무시합니다.");
+        }
+        return filtered;
+    }
 
     /// <summary>임시 파일에 쓴 뒤 교체한다 (도중 종료로 본 파일이 잘리지 않게). 직전 본은 .bak으로 남는다.</summary>
     private static void SaveSongIdMap(Dictionary<string, int> map) =>

@@ -613,6 +613,21 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 
 확인 항목 (인게임): AGENTS.md §7의 23차 항목.
 
+## 24차 (2026-11-27): BGA 절대경로 안정화·VRAM 누수 차단·소유권 락 프리화·BMS 안정 정렬 → v1.4.5
+
+대상: `CustomMedia` 비디오 경로 및 커버 스프라이트 VRAM 관리, `SongOwnershipStore` 락 경합 해소, `BmsConverter` 파싱 순서 보장, `CustomSongs` 곡 번호 범위 검증.
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[HarmonyPatch]` 72개·`[PatchArgs]` 79개·`[Fingerprint]` 전 항목 실패 0). **인게임 실기는 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C24-1 | `CustomMedia.Apply` (BGA 재생 실패 버그) | `new Uri(path).AbsoluteUri`를 사용하면 파일 경로에 `#`(샤프), 공백 등이 있을 때 URL 인코딩(`%23`, `%20`)되어 Windows Media Foundation 백엔드가 파일을 열지 못함 | Unity 공식 표준 권장대로 `Path.GetFullPath(path)`를 직접 전달하여 특수문자/공백/유니코드 경로 재생 보장 |
+| C24-2 | `CustomMedia.GetCover` (GPU VRAM 누수) | `Texture2D` 생성 후 `Sprite.Create` 단계에서 예외가 발생하면 텍스처 인스턴스가 고아로 남아 VRAM 누수 유발 | `try-catch`로 감싸 `Sprite.Create` 예외 발생 시 생성된 `tex`를 명시적으로 `Destroy(tex)` 보장 |
+| C24-3 | `SongOwnershipStore` (선곡 핫패스 병목) | 오프라인 모드 선곡 화면에서 모든 곡의 보유 상태를 반복 조회할 때 `lock (_lock)`으로 동기화되어 스레드 경합 유발 | `ConcurrentDictionary<string, int>`를 사용하여 읽기(`TryGet`)를 완전 락 프리(Lock-Free)화 |
+| C24-4 | `BmsConverter.BmsObject` (정렬 불안정성) | `List<T>.Sort()`는 불안정 정렬이라 동일 위치·채널에 위치한 오브젝트들의 선후 관계가 무작위로 뒤바뀔 위험 존재 | `BmsObject`에 파싱 순서 `Index`를 추가하고 비교 시 인덱스까지 대조하여 안정 정렬(Stable Sort) 보장 |
+| C24-5 | `CustomSongs.LoadSongIdMap` (오버플로 방어) | 비정상적이거나 손상된 곡 번호가 들어올 경우 `PatternIndex = 990000 + number * 10 + i` 계산 시 정수 오버플로 위험 | `v is >= 1 and <= 99999` 범위 유효성 검증 필터 추가 |
+
+확인 항목 (인게임): AGENTS.md §7의 24차 항목.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.
