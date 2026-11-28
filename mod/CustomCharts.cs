@@ -97,7 +97,8 @@ internal static class CustomCharts
     private static bool HasCustomChartFiles()
     {
         long now = Environment.TickCount64;
-        if (now - Volatile.Read(ref s_customFilesCheckedAt) < CustomFilesCacheTtlMs)
+        long last = Volatile.Read(ref s_customFilesCheckedAt);
+        if (now - last < CustomFilesCacheTtlMs)
             return s_hasCustomFiles;
         bool has;
         try { has = Directory.Exists(CustomDir) && Directory.EnumerateFiles(CustomDir, "*.json").Any(); }

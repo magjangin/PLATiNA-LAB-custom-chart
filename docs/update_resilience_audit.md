@@ -628,6 +628,18 @@ Il2CppInterop이 바꾼 이름을 실측했다. 바뀐 타입에는 `[Obfuscated
 
 확인 항목 (인게임): AGENTS.md §7의 24차 항목.
 
+## 25차 (2026-11-28): 시간 측정 스로틀 안정성·타이머 언더플로 방지 → v1.4.6
+
+대상: `CustomCharts` 커스텀 차트 디렉터리 캐싱, `CurtainBypassPatches` 커튼 정리 스로틀.
+검증: Release 빌드 경고·오류 0건, 하네스 종료 코드 0 (`[HarmonyPatch]` 72개·`[PatchArgs]` 79개·`[Fingerprint]` 전 항목 실패 0). **인게임 실기는 이 빌드로 미확인.**
+
+| # | 위치 | 문제 | 수정 |
+|---|---|---|---|
+| C25-1 | `CustomCharts.HasCustomChartFiles` (스로틀 버그) | `s_customFilesCheckedAt`의 초기값이 `long.MinValue`일 때 `now - Volatile.Read(...)` 연산에서 산술 오버플로/언더플로로 첫 호출 스로틀링 체크가 어긋날 위험 | `last`를 로컬에 스냅샷하고 안전한 차이 비교로 정규화 |
+| C25-2 | `CurtainBypassManager.DismissAllCurtains` (스로틀 버그) | `s_lastScanTick`의 초기값이 `long.MinValue / 2`일 때 `now - Interlocked.Read(...)` 연산에서 스로틀 판정이 비정상 통과/건너뜀 위험 | `last`를 로컬에 스냅샷하고 안정적인 간격 비교로 정리 |
+
+확인 항목 (인게임): AGENTS.md §7의 25차 항목.
+
 ## 게임 업데이트 후 확인 순서
 
 1. MelonLoader가 인터롭을 다시 만들었는지 본다.

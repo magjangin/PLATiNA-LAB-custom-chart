@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-11-28
+
+### 수정 (시간 측정 스로틀 안정성)
+- `CustomCharts.HasCustomChartFiles` 및 `CurtainBypassManager.DismissAllCurtains`에서 초기 비교 시 `now - last` 계산이 언더플로되어 TTL/스로틀 체크가 비정상적으로 스킵되던 타이밍 버그를 수정했다 (변수에 스냅샷 후 조건문 안전 비교).
+
 ## [1.4.5] - 2026-11-27
 
 ### 수정 (BGA 재생 및 리소스 누수 차단)
