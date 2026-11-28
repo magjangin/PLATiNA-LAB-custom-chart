@@ -42,7 +42,8 @@ internal static class CurtainBypassManager
     {
         if (!Offline.Enabled || HookGuard.IsDisabled(Hook)) return;
         long now = Environment.TickCount64;
-        if (throttled && (s_sceneClean || now - Interlocked.Read(ref s_lastScanTick) < ThrottleMs)) return;
+        long last = Interlocked.Read(ref s_lastScanTick);
+        if (throttled && (s_sceneClean || now - last < ThrottleMs)) return;
         Interlocked.Exchange(ref s_lastScanTick, now);
         try
         {
